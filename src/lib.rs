@@ -37,6 +37,29 @@ const CMD_SEND_CONTROL_DATA: u8 = 55;
 const CMD_GET_STATS: u8 = 56;
 //endregion
 
+//region Response Codes (consts)
+const RESP_CODE_DEVICE_INFO: u8 = 13;
+const RESP_CODE_SELF_INFO: u8 = 5;
+const RESP_CODE_CONTACTS_START: u8 = 2;
+const RESP_CODE_CONTACT: u8 = 3;
+const RESP_CODE_END_OF_CONTACTS: u8 = 4;
+const RESP_CODE_CURR_TIME: u8 = 9;
+const RESP_CODE_OK: u8 = 0;
+const RESP_CODE_ERR: u8 = 1;
+
+const RESP_CODE_NO_MORE_MESSAGES: u8 = 10;
+const RESP_CODE_CONTACT_MSG_RECV: u8 = 7;
+const RESP_CODE_CHANNEL_MSG_RECV: u8 = 8;
+const RESP_CODE_CONTACT_MSG_RECV_V3: u8 = 16;
+const RESP_CODE_CHANNEL_MSG_RECV_V3: u8 = 17;
+const RESP_CODE_EXPORT_CONTACT: u8 = 11;
+const RESP_CODE_BATT_AND_STORAGE: u8 = 12;
+const RESP_CODE_SENT: u8 = 6;
+const RESP_CODE_ADVERT_PATH: u8 = 22;
+const RESP_CODE_STATUS: u8 = 24;
+
+//endregion
+
 //region Push Codes (consts)
 const PUSH_CODE_ADVERT: u8 = 0x80;
 const PUSH_CODE_PATH_UPDATED: u8 = 0x81;
@@ -53,11 +76,53 @@ const PUSH_CODE_BINARY_RESPONSE: u8 = 0x8C;
 const PUSH_CODE_CONTROL_DATA: u8 = 0x8D;
 //endregion
 
-
+//region error codes (consts)
+const ERR_CODE_UNSUPPORTED_CMD: u8 = 1;
+const ERR_CODE_NOT_FOUND: u8 = 2;
+const ERR_CODE_TABLE_FULL: u8 = 3;
+const ERR_CODE_BAD_STATE: u8 = 4;
+const ERR_CODE_FILE_IO_ERROR: u8 = 5;
+const ERR_CODE_ILLEGAL_ARG: u8 = 6;
+//endregion
 
 pub enum Commands {
     CmdDeviceQuery(DeviceQuery),
-    CmdAppStart(AppStart)
+    CmdAppStart(AppStart),
+    CmdGetContacts(GetContacts),
+    CmdGetDeviceTime,
+    CmdSetDeviceTime,
+    CmdSendSelfAdvert,
+    CmdSetAdvertName,
+    CmdSetAdvertLatLon,
+    CmdSyncNextMessage,
+    CmdAddUpdateContact,
+    CmdRemoveContact,
+    CmdShareContact,
+    CmdExportContact,
+    CmdImportContact,
+    CmdReboot,
+    CmdGetBattAndStorage,
+    CmdSetTuningParams,
+    CmdSetOtherParams,
+    CmdSendTxtMsg,
+    CmdSendChannelTxtMsg,
+    CmdSetRadioParams,
+    CmdSetRadioTxPower,
+    CmdResetPath,
+    CmdSendRawData,
+    CmdSendLogin,
+    CmdSendStatusReq,
+    CmdSendTracePath,
+    CmdSendTelemetryReq,
+    CmdGetCustomVars,
+    CmdSetCustomVar,
+    CmdGetAdvertPath,
+    CmdGetTuningParams,
+    CmdSendBinaryReq,
+    CmdFactoryReset,
+    CmdSendControlData,
+    CmdGetStats
+
 
 }
 pub struct AppStart {
@@ -69,4 +134,9 @@ pub struct AppStart {
 pub struct DeviceQuery {
     code: u8,
     app_target_ver: u8
+}
+
+pub struct GetContacts {
+    code: u8,
+    since: Option<u32>
 }
