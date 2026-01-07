@@ -1,0 +1,11 @@
+[package]
+name = "meshcore_companion_rs"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "companion_test"
+path = "src/main.rs"
+
+[dependencies]
+
