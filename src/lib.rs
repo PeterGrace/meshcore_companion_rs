@@ -122,9 +122,42 @@ pub enum Commands {
     CmdFactoryReset,
     CmdSendControlData,
     CmdGetStats
-
-
 }
+pub enum Responses {
+    ContactsStart,
+    Contact,
+    EndOfContacts,
+    CurrTime,
+    Ok,
+    Err,
+    NoMoreMessages,
+    ContactMsgRecv,
+    ContactMsgRecvV3,
+    ChannelMsgRecv,
+    ChannelMsgRecvV3,
+    ExportContact,
+    BattAndStorage,
+    Sent,
+    AdvertPath,
+    Stats
+}
+
+pub enum PushCodes {
+    Advert,
+    PathUpdated,
+    SendConfirmed,
+    MsgWaiting,
+    RawData,
+    LoginSuccess,
+    LoginFail,
+    StatusResponse,
+    TraceData,
+    NewAdvert,
+    TelemetryResponse,
+    BinaryResponse,
+    ControlData
+}
+
 pub struct AppStart {
     code: u8,
     app_ver: u8,
