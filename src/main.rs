@@ -14,7 +14,7 @@ pub async fn main() {
     //region console logging
     let console_layer = tokio_console_subscriber::spawn();
     let filter_layer = EnvFilter::try_from_default_env()
-        .or_else(|_| EnvFilter::try_new("debug"))
+        .or_else(|_| EnvFilter::try_new("info"))
         .unwrap();
     let format_layer = tracing_subscriber::fmt::layer()
         .event_format(
@@ -43,13 +43,13 @@ pub async fn main() {
         ..AppStart::default()
     };
     foo.command(Commands::CmdAppStart(appstart)).await;
-    //
-    // let data: DeviceQuery = DeviceQuery {
-    //     code: consts::CMD_DEVICE_QEURY,
-    //     app_target_ver: 3
-    // };
-    //foo.command(Commands::CmdDeviceQuery(data)).await;
-    // foo.command(Commands::CmdReboot).await;
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+    let data: DeviceQuery = DeviceQuery {
+        code: consts::CMD_DEVICE_QEURY,
+        app_target_ver: 3
+    };
+    foo.command(Commands::CmdDeviceQuery(data)).await;
     loop{
         foo.check().unwrap();
         tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;

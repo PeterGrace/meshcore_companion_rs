@@ -10,12 +10,15 @@ mod tests;
 use std::collections::HashMap;
 use tokio::task::JoinHandle;
 use std::io::Read;
+use lazy_static::lazy_static;
 use thiserror::Error;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, RwLock};
+use tokio::time::timeout;
 pub use crate::commands::{AppStart, Commands};
-use crate::responses::Responses;
+use crate::responses::{DeviceInfo, Responses};
 use crate::serial_actor::{SerialFrame, serial_loop};
 use crate::commands::Reboot;
+use crate::responses::SelfInfo;
 
 #[derive(Debug, Error)]
 pub enum AppError {
@@ -23,12 +26,15 @@ pub enum AppError {
     Misc(String),
 }
 
+#[derive(Debug)]
 pub struct Companion {
     to_radio_tx: mpsc::Sender<SerialFrame>,
     to_radio_rx: Option<mpsc::Receiver<SerialFrame>>,
     from_radio_tx: mpsc::Sender<SerialFrame>,
     from_radio_rx: mpsc::Receiver<SerialFrame>,
-    receive_queue: HashMap<u8, Vec<u8>>,
+    receive_queue: HashMap<u8, Responses>,
+    self_info: Option<SelfInfo>,
+    device_info: Option<DeviceInfo>,
     port: String
 }
 
@@ -42,7 +48,9 @@ impl Companion {
             from_radio_tx, 
             from_radio_rx,
             receive_queue: HashMap::new(),
-            port: port.to_string() 
+            port: port.to_string(),
+            self_info: None,
+            device_info: None
         }
     }
     pub fn listen(&mut self) -> Result<JoinHandle<()>, AppError> {
@@ -58,7 +66,22 @@ impl Companion {
     }
     pub fn check(&mut self) -> Result<(), AppError> {
         while let Ok(msg) = self.from_radio_rx.try_recv() {
-            info!("Received message: {:?}", msg);
+            let frame = msg.frame;
+            match frame[0] {
+                consts::RESP_CODE_SELF_INFO => {
+                    let self_info = SelfInfo::from_frame(&frame);
+                    debug!("Received self info response: {self_info:#?}");
+                    self.self_info = Some(self_info);
+                }
+                consts::RESP_CODE_DEVICE_INFO => {
+                    let device_info = DeviceInfo::from_frame(&frame);
+                    debug!("Received device info response: {device_info:#?}");
+                    self.device_info = Some(device_info);
+                },
+                _ => {
+                    warn!("unimplemented response code: {:02x} {:02x?}", frame[0], frame);
+                },
+            }
 
         }
         Ok(())
@@ -92,7 +115,7 @@ impl Companion {
             },
             Commands::CmdDeviceQuery(app) => {
                 // Send command
-                let data = vec![];
+                let data = vec![consts::CMD_DEVICE_QEURY, app.app_target_ver];
                 let frame: SerialFrame = SerialFrame {
                     delimiter: consts::SERIAL_OUTBOUND,
                     frame_length: data.len() as u16,
