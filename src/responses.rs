@@ -1,0 +1,37 @@
+pub enum Responses {
+    SelfInfo(SelfInfo),
+    ContactsStart,
+    Contact,
+    EndOfContacts,
+    CurrTime,
+    Ok,
+    Err,
+    NoMoreMessages,
+    ContactMsgRecv,
+    ContactMsgRecvV3,
+    ChannelMsgRecv,
+    ChannelMsgRecvV3,
+    ExportContact,
+    BattAndStorage,
+    Sent,
+    AdvertPath,
+    Stats
+}
+pub struct SelfInfo {
+    code: u8,
+    r#type: u8,
+    tx_power_dbm: u8,
+    max_tx_power: u8,
+    public_key: [u8; 32],
+    adv_lat: i32,
+    adv_lon: i32,
+    multi_acks: u8,
+    advert_loc_policy: u8,
+    telemetry_modes: u8,
+    manual_add_contacts: u8,
+    radio_freq: u32,
+    radio_bw: u32,
+    radio_sf: u8,
+    radio_cr: u8,
+    name: String
+}
