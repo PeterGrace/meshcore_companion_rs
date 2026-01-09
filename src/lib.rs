@@ -89,6 +89,20 @@ impl Companion {
                     info!("Received new advert, requesting contact sync.");
                     let get_contacts = GetContacts { code: CMD_GET_CONTACTS, since: Some(self.newest_advert_time)};
                     self.command(Commands::CmdGetContacts(get_contacts)).await;
+                },
+                consts::RESP_CODE_CONTACTS_START => {
+                    let count = frame[1];
+                    info!("Received contacts start, {count} contacts follow.");
+                },
+                consts::RESP_CODE_CONTACT => {
+                    let contact = Contact::from_frame(&frame);
+                    info!("Received contact: {contact:?}");
+                    self.contacts.push(contact);
+                }
+                consts::RESP_CODE_END_OF_CONTACTS => {
+                    let last_modified = u32::from_le_bytes([frame[1], frame[2], frame[3], frame[4]]);
+                    info!("Received end of contacts, newest advert time: {last_modified}");
+                    self.newest_advert_time = last_modified;
                 }
                 _ => {
                     warn!("unimplemented response code: {:02x} {:02x?}", frame[0], frame);

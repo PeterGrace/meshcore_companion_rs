@@ -65,6 +65,7 @@ pub async fn serial_loop(
                                 .await
                                 .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
                             accumulator.clear();
+                            break;
                         }
                         Ok((frame, Some(residual))) => {
                             info!("Residual frame: {:02x?}", residual);
@@ -72,13 +73,19 @@ pub async fn serial_loop(
                                 .send(frame)
                                 .await
                                 .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
-                            accumulator = residual
+                            accumulator = residual;
                         }
                         Err(e) if e.kind() == DecodeErrorKind::FrameTooShort => {
                             break;
                         }
-                        Err(e) if e.kind() == DecodeErrorKind::FrameTooLong => accumulator.clear(),
-                        Err(e) => println!("Failed to decode frame: {}", e),
+                        Err(e) if e.kind() == DecodeErrorKind::FrameTooLong => {
+                            accumulator.clear();
+                            break;
+                        },
+                        Err(e) => {
+                            println!("Failed to decode frame: {}", e);
+                            break;
+                        },
                     }
                 }
             }
@@ -127,7 +134,6 @@ pub fn decode_frame(in_frame: &[u8]) -> Result<(SerialFrame, Option<Vec<u8>>), D
     let mut vec_frame: Vec<u8>;
     let mut residual: Option<Vec<u8>> = None;
     if in_frame.len() < 4 {
-        info!("too short {in_frame:#?}");
         return Err(DecodeError::FrameTooShort);
     }
     if in_frame[0] != SERIAL_INBOUND && in_frame[0] != SERIAL_OUTBOUND {
@@ -135,15 +141,12 @@ pub fn decode_frame(in_frame: &[u8]) -> Result<(SerialFrame, Option<Vec<u8>>), D
     }
     let frame_length = u16::from_le_bytes([in_frame[1], in_frame[2]]);
     if in_frame.len() < frame_length as usize + 3 {
-        info!("too short");
         return Err(DecodeError::FrameTooShort);
     }
     vec_frame = in_frame.to_vec();
     if in_frame.len() > frame_length as usize + 3 {
         buffer = vec_frame.drain(0..frame_length as usize + 3).collect();
         residual = Some(vec_frame);
-        //info!("too long  {in_frame:#?}");
-        //return Err(DecodeError::FrameTooLong)
     } else {
         buffer = vec_frame;
     }

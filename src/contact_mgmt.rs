@@ -1,8 +1,29 @@
 use std::io::{Cursor, Read};
+use std::fmt;
+
+pub struct PublicKey {
+    bytes: [u8; 32]
+}
+impl fmt::Debug for PublicKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for byte in &self.bytes {
+            write!(f, "{:02x}", byte)?;
+        }
+        Ok(())
+    }
+}
+impl fmt::Display for PublicKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for byte in &self.bytes {
+            write!(f, "{:02x}", byte)?;
+        }
+        Ok(())
+    }
+}
 
 #[derive(Debug)]
 pub struct Contact {
-    pub public_key: [u8; 32],
+    pub public_key: PublicKey,
     pub adv_type: u8,
     pub flags: u8,
     pub out_path_len: i8,
@@ -17,6 +38,9 @@ pub struct Contact {
 impl Contact {
     pub fn from_frame(frame: &Vec<u8>) -> Self {
         let mut cursor = Cursor::new(frame);
+
+        let mut code = [0u8;1];
+        cursor.read_exact(&mut code).unwrap();
 
         let mut public_key = [0u8; 32];
         cursor.read_exact(&mut public_key).unwrap();
@@ -43,7 +67,7 @@ impl Contact {
 
 
         Self {
-            public_key,
+            public_key: PublicKey { bytes: public_key },
             adv_type: adv_type[0],
             flags: flags[0],
             out_path_len:  out_path_len[0] as i8,

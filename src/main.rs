@@ -14,7 +14,7 @@ pub async fn main() {
     //region console logging
     let console_layer = tokio_console_subscriber::spawn();
     let filter_layer = EnvFilter::try_from_default_env()
-        .or_else(|_| EnvFilter::try_new("debug"))
+        .or_else(|_| EnvFilter::try_new("info"))
         .unwrap();
     let format_layer = tracing_subscriber::fmt::layer()
         .event_format(
