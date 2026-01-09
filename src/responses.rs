@@ -17,7 +17,7 @@ pub enum Responses {
     BattAndStorage,
     Sent,
     AdvertPath,
-    Stats
+    Stats,
 }
 #[derive(Debug)]
 pub struct SelfInfo {
@@ -36,7 +36,7 @@ pub struct SelfInfo {
     radio_bw: u32,
     radio_sf: u8,
     radio_cr: u8,
-    name: String
+    name: String,
 }
 impl SelfInfo {
     pub fn from_frame(frame: &Vec<u8>) -> Self {
@@ -90,8 +90,7 @@ impl SelfInfo {
             radio_bw: u32::from_le_bytes(radio_bw),
             radio_sf: radio_sf[0],
             radio_cr: radio_cr[0],
-            name: String::from_utf8(name).unwrap()
-
+            name: String::from_utf8(name).unwrap(),
         }
     }
 }
@@ -104,7 +103,7 @@ pub struct DeviceInfo {
     ble_pin: u32,
     firmware_build_date: String,
     manufacturer_model: String,
-    semantic_version: String
+    semantic_version: String,
 }
 
 impl DeviceInfo {
@@ -124,7 +123,7 @@ impl DeviceInfo {
         cursor.read_exact(&mut firmware_build_date).unwrap();
         let mut manufacturer_model = [0u8; 40];
         cursor.read_exact(&mut manufacturer_model).unwrap();
-        let mut semantic_version = [0u8;20];
+        let mut semantic_version = [0u8; 20];
         cursor.read_exact(&mut semantic_version).unwrap();
 
         Self {
@@ -133,9 +132,18 @@ impl DeviceInfo {
             max_contacts_div_2: max_contacts_div_2[0],
             max_channels: max_channels[0],
             ble_pin: u32::from_le_bytes(ble_pin),
-            firmware_build_date: String::from_utf8(firmware_build_date.to_vec()).unwrap().trim_end_matches('\0').to_string(),
-            manufacturer_model: String::from_utf8(manufacturer_model.to_vec()).unwrap().trim_end_matches('\0').to_string(),
-            semantic_version: String::from_utf8(semantic_version.to_vec()).unwrap().trim_end_matches('\0').to_string()
-        }
+            firmware_build_date: String::from_utf8(firmware_build_date.to_vec())
+                .unwrap()
+                .trim_end_matches('\0')
+                .to_string(),
+            manufacturer_model: String::from_utf8(manufacturer_model.to_vec())
+                .unwrap()
+                .trim_end_matches('\0')
+                .to_string(),
+            semantic_version: String::from_utf8(semantic_version.to_vec())
+                .unwrap()
+                .trim_end_matches('\0')
+                .to_string(),
         }
     }
+}

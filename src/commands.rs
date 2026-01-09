@@ -1,5 +1,4 @@
-
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 pub enum Commands {
     CmdDeviceQuery(DeviceQuery),
@@ -37,7 +36,7 @@ pub enum Commands {
     CmdSendBinaryReq,
     CmdFactoryReset,
     CmdSendControlData,
-    CmdGetStats
+    CmdGetStats,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -45,20 +44,20 @@ pub struct AppStart {
     pub code: u8,
     pub app_ver: u8,
     pub reserved: [u8; 6],
-    pub app_name: String
+    pub app_name: String,
 }
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct DeviceQuery {
     pub code: u8,
-    pub app_target_ver: u8
+    pub app_target_ver: u8,
 }
 
 pub struct GetContacts {
     pub code: u8,
-    pub since: Option<u32>
+    pub since: Option<u32>,
 }
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Reboot {
     pub(crate) code: u8,
-    pub(crate) text: String
+    pub(crate) text: String,
 }

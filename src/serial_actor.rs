@@ -1,5 +1,5 @@
-use crate::consts::{SERIAL_INBOUND, SERIAL_LOOP_SLEEP_MS, SERIAL_OUTBOUND, TIMEOUT_SERIAL_MS};
 use crate::AppError;
+use crate::consts::{SERIAL_INBOUND, SERIAL_LOOP_SLEEP_MS, SERIAL_OUTBOUND, TIMEOUT_SERIAL_MS};
 use serde::{Deserialize, Serialize};
 use std::io::ErrorKind;
 use std::process::exit;
@@ -68,7 +68,7 @@ pub async fn serial_loop(
                             break;
                         }
                         Ok((frame, Some(residual))) => {
-                            info!("Residual frame: {:02x?}", residual);
+                            trace!("Residual frame: {:02x?}", residual);
                             from_radio
                                 .send(frame)
                                 .await
@@ -81,11 +81,11 @@ pub async fn serial_loop(
                         Err(e) if e.kind() == DecodeErrorKind::FrameTooLong => {
                             accumulator.clear();
                             break;
-                        },
+                        }
                         Err(e) => {
                             println!("Failed to decode frame: {}", e);
                             break;
-                        },
+                        }
                     }
                 }
             }

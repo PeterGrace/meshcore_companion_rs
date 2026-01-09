@@ -69,6 +69,7 @@ pub const PUSH_CODE_RAW_DATA: u8 = 0x84;
 pub const PUSH_CODE_LOGIN_SUCCESS: u8 = 0x85;
 pub const PUSH_CODE_LOGIN_FAIL: u8 = 0x86;
 pub const PUSH_CODE_STATUS_RESPONSE: u8 = 0x87;
+pub const PUSH_CODE_LOG_RX_DATA: u8 = 0x88;
 pub const PUSH_CODE_TRACE_DATA: u8 = 0x89;
 pub const PUSH_CODE_NEW_ADVERT: u8 = 0x8A;
 pub const PUSH_CODE_TELEMETRY_RESPONSE: u8 = 0x8B;

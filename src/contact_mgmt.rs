@@ -1,8 +1,8 @@
-use std::io::{Cursor, Read};
 use std::fmt;
+use std::io::{Cursor, Read};
 
 pub struct PublicKey {
-    bytes: [u8; 32]
+    bytes: [u8; 32],
 }
 impl fmt::Debug for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -32,14 +32,13 @@ pub struct Contact {
     pub last_advert: u32,
     pub adv_lat: i32,
     pub adv_lon: i32,
-    pub lastmod: u32
-
+    pub lastmod: u32,
 }
 impl Contact {
     pub fn from_frame(frame: &Vec<u8>) -> Self {
         let mut cursor = Cursor::new(frame);
 
-        let mut code = [0u8;1];
+        let mut code = [0u8; 1];
         cursor.read_exact(&mut code).unwrap();
 
         let mut public_key = [0u8; 32];
@@ -65,14 +64,16 @@ impl Contact {
         let mut lastmod = [0u8; 4];
         cursor.read_exact(&mut lastmod).unwrap();
 
-
         Self {
             public_key: PublicKey { bytes: public_key },
             adv_type: adv_type[0],
             flags: flags[0],
-            out_path_len:  out_path_len[0] as i8,
+            out_path_len: out_path_len[0] as i8,
             out_path,
-            adv_name: String::from_utf8(adv_name.to_vec()).unwrap().trim_end_matches('\0').to_string(),
+            adv_name: String::from_utf8(adv_name.to_vec())
+                .unwrap()
+                .trim_end_matches('\0')
+                .to_string(),
             last_advert: u32::from_le_bytes(last_advert),
             adv_lat: i32::from_le_bytes(adv_lat),
             adv_lon: i32::from_le_bytes(adv_lon),

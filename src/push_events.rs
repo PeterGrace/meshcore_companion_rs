@@ -7,9 +7,10 @@ pub enum PushCodes {
     LoginSuccess,
     LoginFail,
     StatusResponse,
+    LogRxData,
     TraceData,
     NewAdvert,
     TelemetryResponse,
     BinaryResponse,
-    ControlData
+    ControlData,
 }
