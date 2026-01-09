@@ -5,7 +5,7 @@ use console_subscriber as tokio_console_subscriber;
 use tracing_subscriber::{EnvFilter, Registry, prelude::*};
 use tracing_subscriber::fmt::format::FmtSpan;
 use meshcore_companion_rs::Commands;
-use meshcore_companion_rs::commands::DeviceQuery;
+use meshcore_companion_rs::commands::{DeviceQuery, GetContacts};
 use meshcore_companion_rs::consts;
 
 
@@ -14,7 +14,7 @@ pub async fn main() {
     //region console logging
     let console_layer = tokio_console_subscriber::spawn();
     let filter_layer = EnvFilter::try_from_default_env()
-        .or_else(|_| EnvFilter::try_new("info"))
+        .or_else(|_| EnvFilter::try_new("debug"))
         .unwrap();
     let format_layer = tracing_subscriber::fmt::layer()
         .event_format(
@@ -45,13 +45,20 @@ pub async fn main() {
     foo.command(Commands::CmdAppStart(appstart)).await;
 
     tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+
     let data: DeviceQuery = DeviceQuery {
         code: consts::CMD_DEVICE_QEURY,
         app_target_ver: 3
     };
     foo.command(Commands::CmdDeviceQuery(data)).await;
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+
+    let data: GetContacts = GetContacts { code: consts::CMD_GET_CONTACTS, since: None };
+    foo.command(Commands::CmdGetContacts(data)).await;
+
     loop{
-        foo.check().unwrap();
+        foo.check().await.unwrap();
         tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
     }
 }

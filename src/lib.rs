@@ -6,6 +6,7 @@ pub mod responses;
 
 mod serial_actor;
 mod tests;
+mod contact_mgmt;
 
 use std::collections::HashMap;
 use tokio::task::JoinHandle;
@@ -17,7 +18,9 @@ use tokio::time::timeout;
 pub use crate::commands::{AppStart, Commands};
 use crate::responses::{DeviceInfo, Responses};
 use crate::serial_actor::{SerialFrame, serial_loop};
-use crate::commands::Reboot;
+use crate::commands::{GetContacts, Reboot};
+use crate::consts::CMD_GET_CONTACTS;
+use crate::contact_mgmt::Contact;
 use crate::responses::SelfInfo;
 
 #[derive(Debug, Error)]
@@ -35,7 +38,9 @@ pub struct Companion {
     receive_queue: HashMap<u8, Responses>,
     self_info: Option<SelfInfo>,
     device_info: Option<DeviceInfo>,
-    port: String
+    contacts: Vec<Contact>,
+    port: String,
+    newest_advert_time: u32
 }
 
 impl Companion {
@@ -50,7 +55,9 @@ impl Companion {
             receive_queue: HashMap::new(),
             port: port.to_string(),
             self_info: None,
-            device_info: None
+            device_info: None,
+            contacts: vec![],
+            newest_advert_time: 0
         }
     }
     pub fn listen(&mut self) -> Result<JoinHandle<()>, AppError> {
@@ -64,7 +71,7 @@ impl Companion {
             serial_loop(port, &mut to_radio_rx, &from_radio_tx).await;
         }))
     }
-    pub fn check(&mut self) -> Result<(), AppError> {
+    pub async fn check(&mut self) -> Result<(), AppError> {
         while let Ok(msg) = self.from_radio_rx.try_recv() {
             let frame = msg.frame;
             match frame[0] {
@@ -78,6 +85,11 @@ impl Companion {
                     debug!("Received device info response: {device_info:#?}");
                     self.device_info = Some(device_info);
                 },
+                consts::PUSH_CODE_ADVERT => {
+                    info!("Received new advert, requesting contact sync.");
+                    let get_contacts = GetContacts { code: CMD_GET_CONTACTS, since: Some(self.newest_advert_time)};
+                    self.command(Commands::CmdGetContacts(get_contacts)).await;
+                }
                 _ => {
                     warn!("unimplemented response code: {:02x} {:02x?}", frame[0], frame);
                 },
@@ -87,7 +99,7 @@ impl Companion {
         Ok(())
 
     }
-    pub async fn command(&mut self, cmd: Commands) -> Result<Responses, AppError> {
+    pub async fn command(&mut self, cmd: Commands) -> Result<(), AppError> {
         match cmd {
             Commands::CmdReboot => {
                 let data: Vec<u8> = vec![0x13,0x72,0x65,0x62,0x6f,0x6f,0x74];
@@ -97,7 +109,7 @@ impl Companion {
                     frame: data
                 };
                 self.to_radio_tx.send(frame).await.unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
-                Err(AppError::Misc("Not implemented yet".to_string()))
+                Ok(())
             }
             Commands::CmdAppStart(app) => {
                 // Send command
@@ -109,9 +121,7 @@ impl Companion {
                     frame: data
                 };
                 self.to_radio_tx.send(frame).await.unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
-
-                // Try to receive response
-                Err(AppError::Misc("Not implemented yet".to_string()))
+                Ok(())
             },
             Commands::CmdDeviceQuery(app) => {
                 // Send command
@@ -122,10 +132,20 @@ impl Companion {
                     frame: data
                 };
                 self.to_radio_tx.send(frame).await.unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
-
-                // Try to receive response
-                Err(AppError::Misc("Not implemented yet".to_string()))
+                Ok(())
             },
+            Commands::CmdGetContacts(payload) => {
+                let mut data = vec![payload.code];
+                let since = u32::to_le_bytes(payload.since.unwrap_or(0));
+                data.extend_from_slice(&since);
+                let frame: SerialFrame = SerialFrame {
+                    delimiter: consts::SERIAL_OUTBOUND,
+                    frame_length: data.len() as u16,
+                    frame: data
+                };
+                self.to_radio_tx.send(frame).await.unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
+                Ok(())
+            }
                 _ => todo!(),
             }
 

@@ -1,28 +1,31 @@
+use crate::consts::{SERIAL_INBOUND, SERIAL_LOOP_SLEEP_MS, SERIAL_OUTBOUND, TIMEOUT_SERIAL_MS};
+use crate::AppError;
+use serde::{Deserialize, Serialize};
 use std::io::ErrorKind;
 use std::process::exit;
+use thiserror::Error;
 use tokio::sync::mpsc;
 use tokio::time::Duration;
-use crate::AppError;
-use crate::consts::{SERIAL_INBOUND, SERIAL_LOOP_SLEEP_MS, SERIAL_OUTBOUND, TIMEOUT_SERIAL_MS};
-use serde::{Serialize, Deserialize};
-use thiserror::Error;
 
 #[derive(Debug, PartialEq, Clone, Default)]
 pub struct SerialFrame {
     pub(crate) delimiter: u8,
     pub(crate) frame_length: u16,
-    pub(crate) frame: Vec<u8>
+    pub(crate) frame: Vec<u8>,
 }
 
 pub async fn serial_loop(
     port: String,
     to_radio: &mut mpsc::Receiver<SerialFrame>,
-    from_radio: &mpsc::Sender<SerialFrame>) {
-
+    from_radio: &mpsc::Sender<SerialFrame>,
+) {
     let mut fd = serialport::new(&port, 115200)
         .timeout(Duration::from_millis(TIMEOUT_SERIAL_MS))
         .open()
-        .unwrap_or_else(|e| { error!("Failed to open serial port: {}", e); exit(1); } );
+        .unwrap_or_else(|e| {
+            error!("Failed to open serial port: {}", e);
+            exit(1);
+        });
 
     let mut buffer = [0; 1024];
     let mut accumulator = Vec::new();
@@ -35,9 +38,9 @@ pub async fn serial_loop(
             data.extend_from_slice(&msg.frame);
 
             debug!("Sending serial frame: {:02x?}", data);
-            fd.write_all(&data).unwrap_or_else(|e| { 
-                error!("Failed to write serial port: {}", e); 
-                exit(1); 
+            fd.write_all(&data).unwrap_or_else(|e| {
+                error!("Failed to write serial port: {}", e);
+                exit(1);
             });
         }
 
@@ -45,21 +48,40 @@ pub async fn serial_loop(
         match fd.read(&mut buffer) {
             Ok(d) if d > 0 => {
                 accumulator.extend_from_slice(&buffer[..d]);
-                let formatted = accumulator.clone().iter()
-                    .map(|b| format!("0x{:02x}", b))
-                    .collect::<Vec<_>>()
-                    .join(",");
-                debug!("accumulator: {formatted}");
-                match decode_frame(&accumulator) {
-                    Ok(frame) => {
-                        accumulator.clear();
-                        from_radio.send(frame).await.unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
-                    },
-                    Err(e) if e.kind() == DecodeErrorKind::FrameTooShort => {},
-                    Err(e) if e.kind() == DecodeErrorKind::FrameTooLong => accumulator.clear(),
-                    Err(e) => println!("Failed to decode frame: {}", e)
+
+                loop {
+                    let formatted = accumulator
+                        .clone()
+                        .iter()
+                        .map(|b| format!("0x{:02x}", b))
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    debug!("accumulator: {formatted}");
+
+                    match decode_frame(&accumulator) {
+                        Ok((frame, None)) => {
+                            from_radio
+                                .send(frame)
+                                .await
+                                .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
+                            accumulator.clear();
+                        }
+                        Ok((frame, Some(residual))) => {
+                            info!("Residual frame: {:02x?}", residual);
+                            from_radio
+                                .send(frame)
+                                .await
+                                .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
+                            accumulator = residual
+                        }
+                        Err(e) if e.kind() == DecodeErrorKind::FrameTooShort => {
+                            break;
+                        }
+                        Err(e) if e.kind() == DecodeErrorKind::FrameTooLong => accumulator.clear(),
+                        Err(e) => println!("Failed to decode frame: {}", e),
+                    }
                 }
-            },
+            }
             Ok(_) => (),
             Err(ref e) if e.kind() == ErrorKind::TimedOut => (),
             Err(e) => {
@@ -74,7 +96,7 @@ pub enum DecodeErrorKind {
     InvalidDelimiter,
     FrameTooShort,
     FrameTooLong,
-    Misc
+    Misc,
 }
 
 #[derive(Debug, Error, Eq, PartialEq)]
@@ -87,7 +109,6 @@ pub enum DecodeError {
     FrameTooLong,
     #[error("Invalid delimiter")]
     InvalidDelimiter,
-
 }
 
 impl DecodeError {
@@ -96,27 +117,45 @@ impl DecodeError {
             DecodeError::InvalidDelimiter => DecodeErrorKind::InvalidDelimiter,
             DecodeError::FrameTooShort => DecodeErrorKind::FrameTooShort,
             DecodeError::FrameTooLong => DecodeErrorKind::FrameTooLong,
-            DecodeError::Misc(_) => DecodeErrorKind::Misc
+            DecodeError::Misc(_) => DecodeErrorKind::Misc,
         }
     }
 }
 
-pub fn decode_frame(in_frame: &[u8]) -> Result<SerialFrame,DecodeError> {
+pub fn decode_frame(in_frame: &[u8]) -> Result<(SerialFrame, Option<Vec<u8>>), DecodeError> {
+    let mut buffer: Vec<u8>;
+    let mut vec_frame: Vec<u8>;
+    let mut residual: Option<Vec<u8>> = None;
     if in_frame.len() < 4 {
-        return Err(DecodeError::FrameTooShort)
-    }
-    let frame_length = u16::from_le_bytes([in_frame[1], in_frame[2]]);
-    if in_frame.len() > frame_length as usize + 3{
-        return Err(DecodeError::FrameTooLong)
-    }
-    if in_frame.len() < frame_length as usize + 3 {
-        return Err(DecodeError::FrameTooShort)
+        info!("too short {in_frame:#?}");
+        return Err(DecodeError::FrameTooShort);
     }
     if in_frame[0] != SERIAL_INBOUND && in_frame[0] != SERIAL_OUTBOUND {
-        return Err(DecodeError::InvalidDelimiter)
+        return Err(DecodeError::InvalidDelimiter);
     }
-    let delimiter = in_frame[0];
     let frame_length = u16::from_le_bytes([in_frame[1], in_frame[2]]);
-    let frame = in_frame[3..].to_vec();
-    Ok(SerialFrame { delimiter, frame_length, frame})
+    if in_frame.len() < frame_length as usize + 3 {
+        info!("too short");
+        return Err(DecodeError::FrameTooShort);
+    }
+    vec_frame = in_frame.to_vec();
+    if in_frame.len() > frame_length as usize + 3 {
+        buffer = vec_frame.drain(0..frame_length as usize + 3).collect();
+        residual = Some(vec_frame);
+        //info!("too long  {in_frame:#?}");
+        //return Err(DecodeError::FrameTooLong)
+    } else {
+        buffer = vec_frame;
+    }
+    let delimiter = buffer[0];
+    let frame_length = u16::from_le_bytes([buffer[1], buffer[2]]);
+    let frame = buffer[3..].to_vec();
+    Ok((
+        SerialFrame {
+            delimiter,
+            frame_length,
+            frame,
+        },
+        residual,
+    ))
 }

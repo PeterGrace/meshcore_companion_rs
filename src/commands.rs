@@ -54,8 +54,8 @@ pub struct DeviceQuery {
 }
 
 pub struct GetContacts {
-    code: u8,
-    since: Option<u32>
+    pub code: u8,
+    pub since: Option<u32>
 }
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Reboot {
