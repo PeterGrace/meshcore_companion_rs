@@ -3,7 +3,7 @@ extern crate tracing;
 
 use console_subscriber as tokio_console_subscriber;
 use meshcore_companion_rs::{Commands, MessageTypes};
-use meshcore_companion_rs::commands::{DeviceQuery, GetContacts};
+use meshcore_companion_rs::commands::{DeviceQuery, GetContacts, SendChannelTxtMsg};
 use meshcore_companion_rs::consts;
 use meshcore_companion_rs::{AppStart, Companion};
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -59,6 +59,18 @@ pub async fn main() {
         since: None,
     };
     let _ = foo.command(Commands::CmdGetContacts(data)).await;
+
+    let msg = SendChannelTxtMsg {
+        code: consts::CMD_SEND_CHANNEL_TXT_MSG,
+        txt_type: 0,
+        channel_idx: 0,
+        sender_timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as u32,        text: "Hello World!".to_string(),
+    };
+    let _ = foo.command(Commands::CmdSendChannelTxtMsg(msg)).await;
+
 
     loop {
         foo.check().await.unwrap();

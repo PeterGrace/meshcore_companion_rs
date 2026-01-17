@@ -88,6 +88,16 @@ impl Companion {
         while let Ok(msg) = self.from_radio_rx.try_recv() {
             let frame = msg.frame;
             match frame[0] {
+                consts::RESP_CODE_OK => {
+                    info!("Received OK response.");
+                }
+                consts::RESP_CODE_ERR => {
+                    error!("Received error response.");
+                }
+                consts::RESP_CODE_SENT => {
+                    let exp_ack = u32::from_le_bytes([frame[1], frame[2], frame[3], frame[4]]);
+                    info!("Message sent.  Ack expected: {exp_ack:02x?}");
+                }
                 consts::RESP_CODE_SELF_INFO => {
                     let self_info = SelfInfo::from_frame(&frame);
                     debug!("Received self info response: {self_info:#?}");
@@ -247,6 +257,32 @@ impl Companion {
                 let mut data = vec![payload.code];
                 let since = u32::to_le_bytes(payload.since.unwrap_or(0));
                 data.extend_from_slice(&since);
+                let frame: SerialFrame = SerialFrame {
+                    delimiter: consts::SERIAL_OUTBOUND,
+                    frame_length: data.len() as u16,
+                    frame: data,
+                };
+                self.to_radio_tx
+                    .send(frame)
+                    .await
+                    .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
+                Ok(())
+            },
+            Commands::CmdSendTxtMsg(msg) => {
+                let data = msg.to_frame();
+                let frame: SerialFrame = SerialFrame {
+                    delimiter: consts::SERIAL_OUTBOUND,
+                    frame_length: data.len() as u16,
+                    frame: data,
+                };
+                self.to_radio_tx
+                    .send(frame)
+                    .await
+                    .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
+                Ok(())
+            },
+            Commands::CmdSendChannelTxtMsg(msg) => {
+                let data = msg.to_frame();
                 let frame: SerialFrame = SerialFrame {
                     delimiter: consts::SERIAL_OUTBOUND,
                     frame_length: data.len() as u16,
