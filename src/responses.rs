@@ -147,3 +147,176 @@ impl DeviceInfo {
         }
     }
 }
+#[derive(Debug)]
+pub struct ContactMsg {
+    code: u8,
+    pub pubkey_prefix: [u8; 6],
+    path_len: u8,
+    txt_type: u8,
+    sender_timestamp: u32,
+    pub text: String,
+}
+impl ContactMsg {
+    pub fn from_frame(frame: &Vec<u8>) -> Self {
+        let mut cursor = Cursor::new(frame);
+        let mut code = [0u8; 1];
+        cursor.read_exact(&mut code).unwrap();
+        let mut pubkey_prefix = [0u8; 6];
+        cursor.read_exact(&mut pubkey_prefix).unwrap();
+        let mut path_len = [0u8; 1];
+        cursor.read_exact(&mut path_len).unwrap();
+        let mut txt_type = [0u8; 1];
+        cursor.read_exact(&mut txt_type).unwrap();
+        let mut sender_timestamp = [0u8; 4];
+        cursor.read_exact(&mut sender_timestamp).unwrap();
+        let mut text = vec![];
+        cursor.read_to_end(&mut text).unwrap();
+
+
+        Self {
+            code: code[0],
+            pubkey_prefix,
+            path_len: path_len[0],
+            txt_type: txt_type[0],
+            sender_timestamp: u32::from_le_bytes(sender_timestamp),
+            text: String::from_utf8(text)
+                .unwrap()
+                .trim_end_matches('\0')
+                .to_string()
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct ContactMsgV3 {
+    code: u8,
+    snr: u8,
+    reserved: [u8;2],
+    pub pubkey_prefix: [u8; 6],
+    path_len: u8,
+    txt_type: u8,
+    sender_timestamp: u32,
+    pub text: String,
+}
+impl ContactMsgV3 {
+    pub fn from_frame(frame: &Vec<u8>) -> Self {
+        let mut cursor = Cursor::new(frame);
+        let mut code = [0u8; 1];
+        cursor.read_exact(&mut code).unwrap();
+        let mut snr = [0u8; 1];
+        cursor.read_exact(&mut snr).unwrap();
+        let mut reserved = [0u8;2];
+        cursor.read_exact(&mut reserved).unwrap();
+        let mut pubkey_prefix = [0u8; 6];
+        cursor.read_exact(&mut pubkey_prefix).unwrap();
+        let mut path_len = [0u8; 1];
+        cursor.read_exact(&mut path_len).unwrap();
+        let mut txt_type = [0u8; 1];
+        cursor.read_exact(&mut txt_type).unwrap();
+        let mut sender_timestamp = [0u8; 4];
+        cursor.read_exact(&mut sender_timestamp).unwrap();
+        let mut text = vec![];
+        cursor.read_to_end(&mut text).unwrap();
+
+
+        Self {
+            code: code[0],
+            snr: snr[0],
+            reserved,
+            pubkey_prefix,
+            path_len: path_len[0],
+            txt_type: txt_type[0],
+            sender_timestamp: u32::from_le_bytes(sender_timestamp),
+            text: String::from_utf8(text)
+                .unwrap()
+                .trim_end_matches('\0')
+                .to_string()
+        }
+    }
+}
+#[derive(Debug)]
+pub struct ChannelMsg {
+    code: u8,
+    pub channel_id: u8,
+    path_len: u8,
+    txt_type: u8,
+    sender_timestamp: u32,
+    pub text: String,
+}
+impl ChannelMsg {
+    pub fn from_frame(frame: &Vec<u8>) -> Self {
+        let mut cursor = Cursor::new(frame);
+        let mut code = [0u8; 1];
+        cursor.read_exact(&mut code).unwrap();
+        let mut channel_id = [0u8; 1];
+        cursor.read_exact(&mut channel_id).unwrap();
+        let mut path_len = [0u8; 1];
+        cursor.read_exact(&mut path_len).unwrap();
+        let mut txt_type = [0u8; 1];
+        cursor.read_exact(&mut txt_type).unwrap();
+        let mut sender_timestamp = [0u8; 4];
+        cursor.read_exact(&mut sender_timestamp).unwrap();
+        let mut text = vec![];
+        cursor.read_to_end(&mut text).unwrap();
+
+
+        Self {
+            code: code[0],
+            channel_id: channel_id[0],
+            path_len: path_len[0],
+            txt_type: txt_type[0],
+            sender_timestamp: u32::from_le_bytes(sender_timestamp),
+            text: String::from_utf8(text)
+                .unwrap()
+                .trim_end_matches('\0')
+                .to_string()
+        }
+    }
+}
+#[derive(Debug)]
+pub struct ChannelMsgV3 {
+    code: u8,
+    snr: u8,
+    reserved: [u8;2],
+    pub channel_id: u8,
+    path_len: u8,
+    txt_type: u8,
+    sender_timestamp: u32,
+    pub text: String,
+}
+impl ChannelMsgV3 {
+    pub fn from_frame(frame: &Vec<u8>) -> Self {
+        let mut cursor = Cursor::new(frame);
+        let mut code = [0u8; 1];
+        cursor.read_exact(&mut code).unwrap();
+        let mut snr = [0u8; 1];
+        cursor.read_exact(&mut snr).unwrap();
+        let mut reserved = [0u8;2];
+        cursor.read_exact(&mut reserved).unwrap();
+        let mut channel_id = [0u8; 1];
+        cursor.read_exact(&mut channel_id).unwrap();
+        let mut path_len = [0u8; 1];
+        cursor.read_exact(&mut path_len).unwrap();
+        let mut txt_type = [0u8; 1];
+        cursor.read_exact(&mut txt_type).unwrap();
+        let mut sender_timestamp = [0u8; 4];
+        cursor.read_exact(&mut sender_timestamp).unwrap();
+        let mut text = vec![];
+        cursor.read_to_end(&mut text).unwrap();
+
+
+        Self {
+            code: code[0],
+            snr: snr[0],
+            reserved,
+            channel_id: channel_id[0],
+            path_len: path_len[0],
+            txt_type: txt_type[0],
+            sender_timestamp: u32::from_le_bytes(sender_timestamp),
+            text: String::from_utf8(text)
+                .unwrap()
+                .trim_end_matches('\0')
+                .to_string()
+        }
+    }
+}

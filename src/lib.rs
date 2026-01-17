@@ -13,14 +13,16 @@ pub use crate::commands::{AppStart, Commands};
 use crate::commands::{GetContacts, Reboot};
 use crate::consts::CMD_GET_CONTACTS;
 use crate::contact_mgmt::Contact;
-use crate::responses::SelfInfo;
-use crate::responses::{DeviceInfo, Responses};
-use crate::serial_actor::{SerialFrame, serial_loop};
+use crate::responses::{
+    ChannelMsg, ChannelMsgV3, ContactMsg, ContactMsgV3, DeviceInfo, Responses, SelfInfo,
+};
+use crate::serial_actor::{serial_loop, SerialFrame};
+use crate::Commands::CmdSyncNextMessage;
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::io::Read;
 use thiserror::Error;
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
@@ -40,8 +42,16 @@ pub struct Companion {
     self_info: Option<SelfInfo>,
     device_info: Option<DeviceInfo>,
     contacts: Vec<Contact>,
+    pub pending_messages: Vec<MessageTypes>,
     port: String,
     newest_advert_time: u32,
+}
+#[derive(Debug)]
+pub enum MessageTypes {
+    ChannelMsg(ChannelMsg),
+    ChannelMsgV3(ChannelMsgV3),
+    ContactMsg(ContactMsg),
+    ContactMsgV3(ContactMsgV3),
 }
 
 impl Companion {
@@ -58,6 +68,7 @@ impl Companion {
             self_info: None,
             device_info: None,
             contacts: vec![],
+            pending_messages: vec![],
             newest_advert_time: 0,
         }
     }
@@ -93,15 +104,15 @@ impl Companion {
                         code: CMD_GET_CONTACTS,
                         since: Some(self.newest_advert_time),
                     };
-                    self.command(Commands::CmdGetContacts(get_contacts)).await;
+                    let _ = self.command(Commands::CmdGetContacts(get_contacts)).await;
                 }
                 consts::RESP_CODE_CONTACTS_START => {
                     let count = frame[1];
-                    info!("Received contacts start, {count} contacts follow.");
+                    debug!("Received contacts start, {count} contacts follow.");
                 }
                 consts::RESP_CODE_CONTACT => {
                     let contact = Contact::from_frame(&frame);
-                    info!("Received contact: {contact:?}");
+                    debug!("Received contact: {contact:?}");
                     self.contacts.push(contact);
                 }
                 consts::RESP_CODE_END_OF_CONTACTS => {
@@ -110,11 +121,50 @@ impl Companion {
                     info!("Received end of contacts, newest advert time: {last_modified}");
                     self.newest_advert_time = last_modified;
                 }
+                consts::PUSH_CODE_MSG_WAITING => {
+                    debug!("Received Message Waiting Indicator");
+                    let _ = self.command(Commands::CmdSyncNextMessage).await;
+                }
+                consts::RESP_CODE_CONTACT_MSG_RECV => {
+                    let contact_msg = ContactMsg::from_frame(&frame);
+                    debug!("Received contact message: {contact_msg:?}");
+                    self.pending_messages.push(MessageTypes::ContactMsg(contact_msg));
+                    let _ = self.command(Commands::CmdSyncNextMessage).await;
+                }
+                consts::RESP_CODE_CONTACT_MSG_RECV_V3 => {
+                    let contact_msg = ContactMsgV3::from_frame(&frame);
+                    debug!("Received channel message: {contact_msg:?}");
+                    self.pending_messages.push(MessageTypes::ContactMsgV3(contact_msg));
+                    let _ = self.command(Commands::CmdSyncNextMessage).await;
+                }
+                consts::RESP_CODE_CHANNEL_MSG_RECV => {
+                    let msg = ChannelMsg::from_frame(&frame);
+                    debug!("Received channel message: {msg:?}");
+                    self.pending_messages.push(MessageTypes::ChannelMsg(msg));
+                    let _ = self.command(Commands::CmdSyncNextMessage).await;
+                }
+                consts::RESP_CODE_CHANNEL_MSG_RECV_V3 => {
+                    let msg = ChannelMsgV3::from_frame(&frame);
+                    debug!("Received channel message: {msg:?}");
+                    self.pending_messages.push(MessageTypes::ChannelMsgV3(msg));
+                    let _ = self.command(Commands::CmdSyncNextMessage).await;
+                }
+                consts::RESP_CODE_NO_MORE_MESSAGES => {
+                    debug!("No more messages to sync.");
+                }
+                consts::PUSH_CODE_PATH_UPDATED => {
+                    info!("Received updated path for a contact, requesting full contact sync.");
+                    let get_contacts = GetContacts {
+                        code: CMD_GET_CONTACTS,
+                        since: Some(self.newest_advert_time),
+                    };
+                    let _ = self.command(Commands::CmdGetContacts(get_contacts)).await;
+                }
                 consts::PUSH_CODE_LOG_RX_DATA => {
                     let snr = i32::from_le_bytes([frame[1], frame[2], frame[3], frame[4]]);
                     let rssi = frame[5];
                     let data = frame[6..].to_vec();
-                    info!("Received log rx data: snr: {snr}, rssi: {rssi}, data: {data:?}");
+                    debug!("Received log rx data: snr: {snr}, rssi: {rssi}, data: {data:?}");
                 }
                 _ => {
                     warn!(
@@ -169,6 +219,19 @@ impl Companion {
             Commands::CmdDeviceQuery(app) => {
                 // Send command
                 let data = vec![consts::CMD_DEVICE_QEURY, app.app_target_ver];
+                let frame: SerialFrame = SerialFrame {
+                    delimiter: consts::SERIAL_OUTBOUND,
+                    frame_length: data.len() as u16,
+                    frame: data,
+                };
+                self.to_radio_tx
+                    .send(frame)
+                    .await
+                    .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
+                Ok(())
+            }
+            Commands::CmdSyncNextMessage => {
+                let data = vec![10u8];
                 let frame: SerialFrame = SerialFrame {
                     delimiter: consts::SERIAL_OUTBOUND,
                     frame_length: data.len() as u16,

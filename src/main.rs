@@ -2,7 +2,7 @@
 extern crate tracing;
 
 use console_subscriber as tokio_console_subscriber;
-use meshcore_companion_rs::Commands;
+use meshcore_companion_rs::{Commands, MessageTypes};
 use meshcore_companion_rs::commands::{DeviceQuery, GetContacts};
 use meshcore_companion_rs::consts;
 use meshcore_companion_rs::{AppStart, Companion};
@@ -33,6 +33,7 @@ pub async fn main() {
     tracing::subscriber::set_global_default(subscriber).expect("Failed to set tracing subscriber");
     //endregion
 
+    info!("companion test app starting");
     let mut foo = Companion::new("/dev/ttyUSB0");
     foo.listen().unwrap();
     let appstart: AppStart = AppStart {
@@ -41,7 +42,7 @@ pub async fn main() {
         app_name: "test".to_string(),
         ..AppStart::default()
     };
-    foo.command(Commands::CmdAppStart(appstart)).await;
+    let _ = foo.command(Commands::CmdAppStart(appstart)).await;
 
     tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
 
@@ -49,7 +50,7 @@ pub async fn main() {
         code: consts::CMD_DEVICE_QEURY,
         app_target_ver: 3,
     };
-    foo.command(Commands::CmdDeviceQuery(data)).await;
+    let _ = foo.command(Commands::CmdDeviceQuery(data)).await;
 
     tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
 
@@ -57,10 +58,27 @@ pub async fn main() {
         code: consts::CMD_GET_CONTACTS,
         since: None,
     };
-    foo.command(Commands::CmdGetContacts(data)).await;
+    let _ = foo.command(Commands::CmdGetContacts(data)).await;
 
     loop {
         foo.check().await.unwrap();
+        while let Some(msg) = foo.pending_messages.pop() {
+            match msg {
+                MessageTypes::ContactMsg(msg) => {
+                    info!("[{}] {}", msg.pubkey_prefix.iter().map(|b| format!("{:02x}", b)).collect::<String>(), msg.text);
+                },
+                MessageTypes::ContactMsgV3(msg) => {
+                    info!("[{}] {}", msg.pubkey_prefix.iter().map(|b| format!("{:02x}", b)).collect::<String>(), msg.text);
+                },
+                MessageTypes::ChannelMsg(msg) => {
+                    info!("[{}] {}", msg.channel_id, msg.text);
+                }
+                MessageTypes::ChannelMsgV3(msg) => {
+                    info!("[{}] {}", msg.channel_id, msg.text);
+                }
+
+            }
+        }
         tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
     }
 }
