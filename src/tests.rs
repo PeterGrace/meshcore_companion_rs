@@ -6,14 +6,14 @@ mod tests {
     #[test]
     fn decode_frame_full() {
         let frame = [SERIAL_INBOUND, 0x05, 0x00, 0x04, 0x01, 0x02, 0x03, 0x04];
-        let result = decode_frame(&frame);
+        let (result, _) = decode_frame(&frame).unwrap();
         assert_eq!(
             result,
-            Ok(SerialFrame {
+            SerialFrame {
                 delimiter: SERIAL_INBOUND,
                 frame_length: 5,
                 frame: vec![0x04, 0x01, 0x02, 0x03, 0x04]
-            })
+            }
         );
     }
     #[test]

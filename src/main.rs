@@ -73,12 +73,13 @@ pub async fn main() {
     };
     let _ = foo.command(Commands::CmdSendChannelTxtMsg(msg)).await;
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(3000)).await;
+    tokio::time::sleep(tokio::time::Duration::from_millis(5000)).await;
     info!("sending DM");
 
     // test sending a message to contact
-    if let Some(contact) = foo.find_contact("PetePC").await {
+    if let Some(contact) = foo.find_contact("Pete").await {
         info!("found contact: {:?}", contact);
+        let pubkey_prefix: [u8; 6] = <[u8; 6]>::try_from(contact.public_key.prefix()).unwrap();
         let msg = SendTxtMsg {
             code: consts::CMD_SEND_TXT_MSG,
             txt_type: 0,
@@ -87,7 +88,7 @@ pub async fn main() {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs() as u32,
-            pubkey_prefix: <[u8; 6]>::try_from(contact.public_key.prefix()).unwrap(),
+            pubkey_prefix,
             text: "Hello World!".to_string(),
         };
         let _ = foo.command(Commands::CmdSendTxtMsg(msg)).await;

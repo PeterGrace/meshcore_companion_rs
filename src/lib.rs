@@ -13,9 +13,7 @@ pub use crate::commands::{AppStart, Commands};
 use crate::commands::{GetContacts, Reboot};
 use crate::consts::CMD_GET_CONTACTS;
 use crate::contact_mgmt::Contact;
-use crate::responses::{
-    ChannelMsg, ChannelMsgV3, ContactMsg, ContactMsgV3, DeviceInfo, Responses, SelfInfo,
-};
+use crate::responses::{AckCode, ChannelMsg, ChannelMsgV3, Confirmation, ContactMsg, ContactMsgV3, DeviceInfo, Responses, SelfInfo};
 use crate::serial_actor::{serial_loop, SerialFrame};
 use crate::Commands::CmdSyncNextMessage;
 use lazy_static::lazy_static;
@@ -37,13 +35,13 @@ pub enum AppError {
 pub struct Companion {
     state: Arc<RwLock<CompanionState>>,
     port: String,
+    to_radio_rx: Option<mpsc::Receiver<SerialFrame>>,
+    from_radio_tx: mpsc::Sender<SerialFrame>,
 }
 
 #[derive(Debug)]
 pub struct CompanionState {
     to_radio_tx: mpsc::Sender<SerialFrame>,
-    to_radio_rx: Option<mpsc::Receiver<SerialFrame>>,
-    from_radio_tx: mpsc::Sender<SerialFrame>,
     from_radio_rx: mpsc::Receiver<SerialFrame>,
     contacts: Vec<Contact>,
     pub pending_messages: Vec<MessageTypes>,
@@ -56,7 +54,8 @@ pub struct CompanionState {
 impl Companion {
     pub async fn find_contact(&self, name: &str) -> Option<Contact> {
         let state = self.state.read().await;
-        state.contacts.iter().find(|c| c.adv_name == name).cloned()
+        let contacts = state.contacts.clone();
+        contacts.iter().find(|c| c.adv_name == name).cloned()
     }
 
     pub async fn pop_message(&self) -> Option<MessageTypes> {
@@ -79,8 +78,6 @@ impl Companion {
         let (from_radio_tx, from_radio_rx) = mpsc::channel(consts::MPSC_BUFFER_DEPTH);
         let state = Arc::new(RwLock::new(CompanionState {
             to_radio_tx,
-            to_radio_rx: None,
-            from_radio_tx,
             from_radio_rx,
             contacts: vec![],
             pending_messages: vec![],
@@ -91,16 +88,15 @@ impl Companion {
         }));
         Companion {
             port: port.to_string(),
+            to_radio_rx: Some(to_radio_rx),
+            from_radio_tx,
             state,
         }
     }
     pub async fn start(&mut self) -> Result<(), AppError> {
         let port = self.port.clone();
-        let from_radio_tx = self.state.read().await.from_radio_tx.clone();
+        let from_radio_tx = self.from_radio_tx.clone();
         let mut to_radio_rx = self
-            .state
-            .write()
-            .await
             .to_radio_rx
             .take()
             .ok_or_else(|| AppError::Misc("Listener already started".to_string()))?;
@@ -253,8 +249,8 @@ async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result<(), AppErr
                 error!("Received error response.");
             }
             consts::RESP_CODE_SENT => {
-                let exp_ack = u32::from_le_bytes([frame[1], frame[2], frame[3], frame[4]]);
-                info!("Message sent.  Ack expected: {exp_ack:02x?}");
+                let exp_ack: AckCode = frame[0..4].try_into().map(AckCode).unwrap();
+                info!("Message sent.  Ack expected: {exp_ack:?}");
             }
             consts::RESP_CODE_SELF_INFO => {
                 let self_info = SelfInfo::from_frame(&frame);
@@ -265,6 +261,10 @@ async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result<(), AppErr
                 let device_info = DeviceInfo::from_frame(&frame);
                 debug!("Received device info response: {device_info:#?}");
                 state.write().await.device_info = Some(device_info);
+            }
+            consts::PUSH_CODE_SEND_CONFIRMED => {
+                let confirmation = Confirmation::from_frame(&frame);
+                info!("Received send confirmation: {confirmation:?}");
             }
             consts::PUSH_CODE_ADVERT => {
                 info!("Received new advert, requesting contact sync.");

@@ -1,3 +1,4 @@
+use std::fmt;
 use std::io::{Cursor, Read};
 #[derive(Debug)]
 pub enum Responses {
@@ -318,5 +319,51 @@ impl ChannelMsgV3 {
                 .trim_end_matches('\0')
                 .to_string()
         }
+    }
+}
+#[derive(Clone, Debug)]
+pub struct Confirmation {
+    code: u8,
+    ack_code: AckCode,
+    round_trip: u32
+}
+impl Confirmation {
+    pub fn from_frame(frame: &Vec<u8>) -> Self {
+        let mut cursor = Cursor::new(frame);
+        let mut code = [0u8; 1];
+        cursor.read_exact(&mut code).unwrap();
+        let mut ack_code = [0u8; 4];
+        cursor.read_exact(&mut ack_code).unwrap();
+        let mut round_trip = [0u8; 4];
+        cursor.read_exact(&mut round_trip).unwrap();
+        Self {
+            code: code[0],
+            ack_code: AckCode(ack_code),
+            round_trip: u32::from_le_bytes(round_trip)
+        }
+    }
+}
+#[derive(Clone)]
+pub struct AckCode(pub [u8; 4]);
+
+impl From<[u8;4]> for AckCode {
+    fn from(bytes: [u8; 4]) -> Self {
+        Self(bytes)
+    }
+}
+impl fmt::Display for AckCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for byte in &self.0 {
+            write!(f, "{:02x}", byte)?;
+        }
+        Ok(())
+    }
+}
+impl fmt::Debug for AckCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for byte in &self.0 {
+            write!(f, "{:02x}", byte)?;
+        }
+        Ok(())
     }
 }
