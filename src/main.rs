@@ -35,7 +35,7 @@ pub async fn main() {
 
     info!("companion test app starting");
     let mut foo = Companion::new("/dev/ttyUSB0");
-    foo.listen().unwrap();
+    let _ = foo.start().await;
     let appstart: AppStart = AppStart {
         code: consts::CMD_APP_START,
         app_ver: 1,
@@ -77,7 +77,7 @@ pub async fn main() {
     info!("sending DM");
 
     // test sending a message to contact
-    if let Some(contact) = foo.find_contact("PetePC") {
+    if let Some(contact) = foo.find_contact("PetePC").await {
         info!("found contact: {:?}", contact);
         let msg = SendTxtMsg {
             code: consts::CMD_SEND_TXT_MSG,
@@ -95,8 +95,7 @@ pub async fn main() {
 
 
     loop {
-        foo.check().await.unwrap();
-        while let Some(msg) = foo.pending_messages.pop() {
+        while let Some(msg) = foo.pop_message().await {
             match msg {
                 MessageTypes::ContactMsg(msg) => {
                     info!("[{}] {}", msg.pubkey_prefix.iter().map(|b| format!("{:02x}", b)).collect::<String>(), msg.text);
