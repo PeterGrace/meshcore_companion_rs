@@ -148,7 +148,7 @@ impl DeviceInfo {
         }
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ContactMsg {
     code: u8,
     pub pubkey_prefix: [u8; 6],
@@ -188,7 +188,7 @@ impl ContactMsg {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ContactMsgV3 {
     code: u8,
     snr: u8,
@@ -235,7 +235,7 @@ impl ContactMsgV3 {
         }
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ChannelMsg {
     code: u8,
     pub channel_id: u8,
@@ -274,7 +274,7 @@ impl ChannelMsg {
         }
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ChannelMsgV3 {
     code: u8,
     snr: u8,
@@ -324,7 +324,7 @@ impl ChannelMsgV3 {
 #[derive(Clone, Debug)]
 pub struct Confirmation {
     code: u8,
-    ack_code: AckCode,
+    pub(crate) ack_code: AckCode,
     round_trip: u32
 }
 impl Confirmation {
@@ -344,6 +344,7 @@ impl Confirmation {
     }
 }
 #[derive(Clone)]
+#[derive(Eq, Hash, PartialEq)]
 pub struct AckCode(pub [u8; 4]);
 
 impl From<[u8;4]> for AckCode {

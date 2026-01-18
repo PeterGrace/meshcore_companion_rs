@@ -3,8 +3,8 @@ use tracing_subscriber::{EnvFilter, Registry};
 use tracing_subscriber::fmt::format::FmtSpan;
 use console_subscriber as tokio_console_subscriber;
 use tracing_subscriber::layer::SubscriberExt;
-use meshcore_companion_rs::{Companion, Commands};
-use meshcore_companion_rs::commands::SendChannelTxtMsg;
+use meshcore_companion_rs::{Companion, Commands, MessageTypes, AppStart};
+use meshcore_companion_rs::commands::{DeviceQuery, GetContacts, SendChannelTxtMsg};
 use meshcore_companion_rs::consts;
 
 #[tokio::main]
@@ -34,7 +34,29 @@ async fn main() {
     let mut companion = Companion::new("/dev/ttyUSB0");
     companion.start().await.unwrap();
 
-    // Give the companion a moment to initialize
+    //region companion data sync (contacts, app info)
+    let appstart: AppStart = AppStart {
+        code: consts::CMD_APP_START,
+        app_ver: 1,
+        app_name: "test".to_string(),
+        ..AppStart::default()
+    };
+    let _ = companion.command(Commands::CmdAppStart(appstart)).await;
+
+    let data: DeviceQuery = DeviceQuery {
+        code: consts::CMD_DEVICE_QEURY,
+        app_target_ver: 3,
+    };
+    let _ = companion.command(Commands::CmdDeviceQuery(data)).await;
+
+    let data: GetContacts = GetContacts {
+        code: consts::CMD_GET_CONTACTS,
+        since: None,
+    };
+    let _ = companion.command(Commands::CmdGetContacts(data)).await;
+    //endregion
+
+    // Give the companion a moment to initialize and download contacts list
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
     // Send a channel message
@@ -56,8 +78,22 @@ async fn main() {
     // Receive messages
     loop {
         while let Some(msg) = companion.pop_message().await {
-            info!("Received message: {:?}", msg);
-            tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
+            match msg {
+                MessageTypes::ContactMsg(msg) => {
+                    info!("[{}] {}", msg.pubkey_prefix.iter().map(|b| format!("{:02x}", b)).collect::<String>(), msg.text);
+                },
+                MessageTypes::ContactMsgV3(msg) => {
+                    info!("[{}] {}", msg.pubkey_prefix.iter().map(|b| format!("{:02x}", b)).collect::<String>(), msg.text);
+                },
+                MessageTypes::ChannelMsg(msg) => {
+                    info!("[{}] {}", msg.channel_id, msg.text);
+                }
+                MessageTypes::ChannelMsgV3(msg) => {
+                    info!("[{}] {}", msg.channel_id, msg.text);
+                }
+
+            }
         }
+        tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
     }
 }

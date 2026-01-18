@@ -62,13 +62,27 @@ pub struct Reboot {
     pub(crate) text: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct MessageEnvelope {
+    pub(crate) msg: SendingMessageTypes,
+    pub(crate) last_attempt_timestamp: u128,
+}
+
+#[derive(Debug, Clone)]
+pub enum SendingMessageTypes {
+    TxtMsg(SendTxtMsg),
+    ChannelMsg(SendChannelTxtMsg)
+}
+
+#[derive(Debug, Clone)]
 pub struct SendTxtMsg {
     pub code: u8,
     pub txt_type: u8,
     pub attempt: u8,
     pub sender_timestamp: u32,
     pub pubkey_prefix: [u8; 6],
-    pub text: String
+    pub text: String,
+    pub timeout: Option<u32>,
 }
 impl SendTxtMsg {
     pub fn to_frame(&self) -> Vec<u8> {
@@ -79,6 +93,7 @@ impl SendTxtMsg {
         frame
     }
 }
+#[derive(Clone, Debug)]
 pub struct SendChannelTxtMsg {
     pub code: u8,
     pub txt_type: u8,

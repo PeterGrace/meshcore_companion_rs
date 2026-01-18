@@ -9,17 +9,22 @@ mod contact_mgmt;
 mod serial_actor;
 mod tests;
 
+use crate::commands::SendingMessageTypes::TxtMsg;
 pub use crate::commands::{AppStart, Commands};
-use crate::commands::{GetContacts, Reboot};
+use crate::commands::{GetContacts, MessageEnvelope, Reboot, SendTxtMsg, SendingMessageTypes};
 use crate::consts::CMD_GET_CONTACTS;
 use crate::contact_mgmt::Contact;
-use crate::responses::{AckCode, ChannelMsg, ChannelMsgV3, Confirmation, ContactMsg, ContactMsgV3, DeviceInfo, Responses, SelfInfo};
+use crate::responses::{
+    AckCode, ChannelMsg, ChannelMsgV3, Confirmation, ContactMsg, ContactMsgV3, DeviceInfo,
+    Responses, SelfInfo,
+};
 use crate::serial_actor::{serial_loop, SerialFrame};
 use crate::Commands::CmdSyncNextMessage;
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::io::Read;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinHandle;
@@ -29,6 +34,8 @@ use tokio::time::timeout;
 pub enum AppError {
     #[error("Misc: {0}")]
     Misc(String),
+    #[error("Message Congestion: {0}")]
+    Congestion(String),
 }
 
 #[derive(Debug)]
@@ -49,6 +56,8 @@ pub struct CompanionState {
     receive_queue: HashMap<u8, Responses>,
     self_info: Option<SelfInfo>,
     device_info: Option<DeviceInfo>,
+    pending_acks: HashMap<AckCode, MessageEnvelope>,
+    pending_msgs: Vec<SendTxtMsg>,
 }
 
 impl Companion {
@@ -64,7 +73,7 @@ impl Companion {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum MessageTypes {
     ChannelMsg(ChannelMsg),
     ChannelMsgV3(ChannelMsgV3),
@@ -85,6 +94,8 @@ impl Companion {
             receive_queue: HashMap::new(),
             self_info: None,
             device_info: None,
+            pending_acks: HashMap::new(),
+            pending_msgs: vec![],
         }));
         Companion {
             port: port.to_string(),
@@ -101,11 +112,15 @@ impl Companion {
             .take()
             .ok_or_else(|| AppError::Misc("Listener already started".to_string()))?;
 
-        tokio::spawn(async move {
+        tokio::task::Builder::new()
+            .name("serial-loop")
+            .spawn(async move {
             serial_loop(port, &mut to_radio_rx, &from_radio_tx).await;
         });
         let state_handle = self.state.clone();
-        tokio::spawn(async move {
+        tokio::task::Builder::new()
+            .name("background-processor")
+        .spawn(async move {
             info!("Background processor started.");
             loop {
                 // We pass the clone into our internal function
@@ -115,19 +130,22 @@ impl Companion {
                     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                     continue;
                 }
-
                 // Small sleep to prevent tight-looping if no messages are arriving
-                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
             }
         });
 
         Ok(())
     }
     pub async fn command(&self, cmd: Commands) -> Result<(), AppError> {
-        send_command(&self.state.read().await.to_radio_tx, cmd).await
+        send_command(&self.state, cmd).await
     }
 }
-pub async fn send_command(tx: &mpsc::Sender<SerialFrame>, cmd: Commands) -> Result<(), AppError> {
+pub async fn send_command(
+    state: &Arc<RwLock<CompanionState>>,
+    cmd: Commands,
+) -> Result<(), AppError> {
+    let tx = state.write().await.to_radio_tx.clone();
     match cmd {
         Commands::CmdReboot => {
             let data: Vec<u8> = vec![0x13, 0x72, 0x65, 0x62, 0x6f, 0x6f, 0x74];
@@ -205,6 +223,13 @@ pub async fn send_command(tx: &mpsc::Sender<SerialFrame>, cmd: Commands) -> Resu
             Ok(())
         }
         Commands::CmdSendTxtMsg(msg) => {
+            let pending_msgs = state.write().await.pending_msgs.clone();
+            if pending_msgs.len() > 0 {
+                return Err(AppError::Congestion(
+                    "Messages still awaiting expected ack code".to_string(),
+                ));
+            }
+            state.write().await.pending_msgs.push(msg.clone());
             let data = msg.to_frame();
             let frame: SerialFrame = SerialFrame {
                 delimiter: consts::SERIAL_OUTBOUND,
@@ -231,7 +256,11 @@ pub async fn send_command(tx: &mpsc::Sender<SerialFrame>, cmd: Commands) -> Resu
         _ => todo!(),
     }
 }
+#[instrument(skip(state))]
 async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result<(), AppError> {
+
+
+    //region check for inbound radio messages
     let mut messages = vec![];
     {
         let mut lock = state.write().await;
@@ -249,8 +278,45 @@ async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result<(), AppErr
                 error!("Received error response.");
             }
             consts::RESP_CODE_SENT => {
-                let exp_ack: AckCode = frame[0..4].try_into().map(AckCode).unwrap();
-                info!("Message sent.  Ack expected: {exp_ack:?}");
+                let tx_type: u8 = frame[1];
+                let exp_ack: AckCode = frame[2..6].try_into().map(AckCode).unwrap();
+                let suggested_timeout = frame[6..10].try_into().map(u32::from_le_bytes).unwrap();
+
+                {
+                    let mut state = state.write().await;
+                    if let Some(msg) = state.pending_msgs.pop() {
+                        let mut msg_timeout = msg.clone();
+                        msg_timeout.timeout = Some(suggested_timeout);
+                        let envelope = MessageEnvelope {
+                            msg: TxtMsg(msg_timeout),
+                            last_attempt_timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis(),
+                        };
+                        state.pending_acks.insert(exp_ack.clone(), envelope);
+                        info!("Assigning {exp_ack} ack code for msg {msg:?}");
+                    } else {
+                        return Err(AppError::Misc(
+                            "Received ack for message that was not sent".to_string(),
+                        ));
+                    }
+                }
+
+                match tx_type {
+                    0 => {
+                        info!(
+                            "Message sent via Flood Routing.  Ack expected: {exp_ack:?}, suggested timeout is {suggested_timeout}ms"
+                        );
+                    }
+                    1 => {
+                        info!(
+                            "Message sent via Direct Routing.  Ack expected: {exp_ack:?}, suggested timeout is {suggested_timeout}ms"
+                        );
+                    }
+                    _ => {
+                        info!(
+                            "Message sent via unknown type {tx_type}  Ack expected: {exp_ack:?}, suggested timeout is {suggested_timeout}ms"
+                        );
+                    }
+                }
             }
             consts::RESP_CODE_SELF_INFO => {
                 let self_info = SelfInfo::from_frame(&frame);
@@ -264,7 +330,15 @@ async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result<(), AppErr
             }
             consts::PUSH_CODE_SEND_CONFIRMED => {
                 let confirmation = Confirmation::from_frame(&frame);
-                info!("Received send confirmation: {confirmation:?}");
+                {
+                    let mut state = state.write().await;
+                    if state.pending_acks.contains_key(&confirmation.ack_code) {
+                        info!("Received send confirmation: {confirmation:?}");
+                        state.pending_acks.remove(&confirmation.ack_code);
+                    } else {
+                        warn!("Received send confirmation for unknown ack code: {confirmation:?}");
+                    }
+                }
             }
             consts::PUSH_CODE_ADVERT => {
                 info!("Received new advert, requesting contact sync.");
@@ -272,11 +346,7 @@ async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result<(), AppErr
                     code: CMD_GET_CONTACTS,
                     since: Some(state.read().await.newest_advert_time),
                 };
-                let _ = send_command(
-                    &state.read().await.to_radio_tx,
-                    Commands::CmdGetContacts(get_contacts),
-                )
-                .await;
+                let _ = send_command(&state, Commands::CmdGetContacts(get_contacts)).await;
             }
             consts::RESP_CODE_CONTACTS_START => {
                 let count = frame[1];
@@ -294,11 +364,7 @@ async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result<(), AppErr
             }
             consts::PUSH_CODE_MSG_WAITING => {
                 debug!("Received Message Waiting Indicator");
-                let _ = send_command(
-                    &state.read().await.to_radio_tx,
-                    Commands::CmdSyncNextMessage,
-                )
-                .await;
+                let _ = send_command(&state, Commands::CmdSyncNextMessage).await;
             }
             consts::RESP_CODE_CONTACT_MSG_RECV => {
                 let contact_msg = ContactMsg::from_frame(&frame);
@@ -308,11 +374,7 @@ async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result<(), AppErr
                     .await
                     .pending_messages
                     .push(MessageTypes::ContactMsg(contact_msg));
-                let _ = send_command(
-                    &state.read().await.to_radio_tx,
-                    Commands::CmdSyncNextMessage,
-                )
-                .await;
+                let _ = send_command(&state, Commands::CmdSyncNextMessage).await;
             }
             consts::RESP_CODE_CONTACT_MSG_RECV_V3 => {
                 let contact_msg = ContactMsgV3::from_frame(&frame);
@@ -322,11 +384,7 @@ async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result<(), AppErr
                     .await
                     .pending_messages
                     .push(MessageTypes::ContactMsgV3(contact_msg));
-                let _ = send_command(
-                    &state.read().await.to_radio_tx,
-                    Commands::CmdSyncNextMessage,
-                )
-                .await;
+                let _ = send_command(&state, Commands::CmdSyncNextMessage).await;
             }
             consts::RESP_CODE_CHANNEL_MSG_RECV => {
                 let msg = ChannelMsg::from_frame(&frame);
@@ -336,11 +394,7 @@ async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result<(), AppErr
                     .await
                     .pending_messages
                     .push(MessageTypes::ChannelMsg(msg));
-                let _ = send_command(
-                    &state.read().await.to_radio_tx,
-                    Commands::CmdSyncNextMessage,
-                )
-                .await;
+                let _ = send_command(&state, Commands::CmdSyncNextMessage).await;
             }
             consts::RESP_CODE_CHANNEL_MSG_RECV_V3 => {
                 let msg = ChannelMsgV3::from_frame(&frame);
@@ -350,11 +404,7 @@ async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result<(), AppErr
                     .await
                     .pending_messages
                     .push(MessageTypes::ChannelMsgV3(msg));
-                let _ = send_command(
-                    &state.read().await.to_radio_tx,
-                    Commands::CmdSyncNextMessage,
-                )
-                .await;
+                let _ = send_command(&state, Commands::CmdSyncNextMessage).await;
             }
             consts::RESP_CODE_NO_MORE_MESSAGES => {
                 debug!("No more messages to sync.");
@@ -365,11 +415,7 @@ async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result<(), AppErr
                     code: CMD_GET_CONTACTS,
                     since: Some(state.read().await.newest_advert_time),
                 };
-                let _ = send_command(
-                    &state.read().await.to_radio_tx,
-                    Commands::CmdGetContacts(get_contacts),
-                )
-                .await;
+                let _ = send_command(&state, Commands::CmdGetContacts(get_contacts)).await;
             }
             consts::PUSH_CODE_LOG_RX_DATA => {
                 let snr = i32::from_le_bytes([frame[1], frame[2], frame[3], frame[4]]);
@@ -385,5 +431,45 @@ async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result<(), AppErr
             }
         }
     }
+    //endregion
+
+    //region check for messages that require re-delivery attempts
+    let mut pending_sends = vec![];
+    {
+        let mut lock = state.read().await;
+        for (k, v) in lock.pending_acks.iter() {
+            pending_sends.push((k.clone(), v.clone()));
+        }
+    }
+    for (ack_code, _) in pending_sends {
+        let mut lock = state.write().await;
+        if let Some(mut envelope) = lock.pending_acks.remove(&ack_code) {
+            match envelope.clone().msg {
+                SendingMessageTypes::TxtMsg(prev_msg) => {
+                    let mut msg = prev_msg;
+                    if msg.attempt > 2 {
+                        warn!("Message {msg:?}, failed to receive ack after 3 attempts.");
+                    } else {
+                        let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
+                        if current_time - envelope.last_attempt_timestamp > msg.timeout.unwrap() as u128 {
+                            msg.attempt += 1;
+                            info!("Resending message {msg:?}");
+                            drop(lock);
+                            let _ = send_command(&state, Commands::CmdSendTxtMsg(msg.clone())).await;
+                        } else {
+                            lock.pending_acks.insert(ack_code, envelope);
+                        }
+                    }
+                }
+                SendingMessageTypes::ChannelMsg(msg) => {
+                    todo!()
+                }
+            }
+        } else {
+            warn!("msg existed in first sweep but not second, this should not happen.")
+        }
+    }
+    //endregion
+
     Ok(())
 }
