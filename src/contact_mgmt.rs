@@ -1,9 +1,17 @@
 use std::fmt;
 use std::io::{Cursor, Read};
 
+#[derive(Clone, Copy)]
 pub struct PublicKey {
     bytes: [u8; 32],
 }
+
+impl PublicKey {
+    pub fn prefix(&self) -> Vec<u8> {
+        self.bytes[0..6].to_vec()
+    }
+}
+
 impl fmt::Debug for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for byte in &self.bytes {
@@ -21,7 +29,7 @@ impl fmt::Display for PublicKey {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Contact {
     pub public_key: PublicKey,
     pub adv_type: u8,

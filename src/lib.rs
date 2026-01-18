@@ -46,6 +46,13 @@ pub struct Companion {
     port: String,
     newest_advert_time: u32,
 }
+
+impl Companion {
+    pub fn find_contact(&self, name: &str) -> Option<Contact> {
+        self.contacts.iter().find(|c| c.adv_name == name).cloned()
+    }
+}
+
 #[derive(Debug)]
 pub enum MessageTypes {
     ChannelMsg(ChannelMsg),

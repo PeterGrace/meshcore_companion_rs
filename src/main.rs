@@ -3,7 +3,7 @@ extern crate tracing;
 
 use console_subscriber as tokio_console_subscriber;
 use meshcore_companion_rs::{Commands, MessageTypes};
-use meshcore_companion_rs::commands::{DeviceQuery, GetContacts, SendChannelTxtMsg};
+use meshcore_companion_rs::commands::{DeviceQuery, GetContacts, SendChannelTxtMsg, SendTxtMsg};
 use meshcore_companion_rs::consts;
 use meshcore_companion_rs::{AppStart, Companion};
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -60,6 +60,7 @@ pub async fn main() {
     };
     let _ = foo.command(Commands::CmdGetContacts(data)).await;
 
+    // test sending a message to public
     let msg = SendChannelTxtMsg {
         code: consts::CMD_SEND_CHANNEL_TXT_MSG,
         txt_type: 0,
@@ -67,9 +68,30 @@ pub async fn main() {
         sender_timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
-            .as_secs() as u32,        text: "Hello World!".to_string(),
+            .as_secs() as u32,
+        text: "Hello World!".to_string(),
     };
     let _ = foo.command(Commands::CmdSendChannelTxtMsg(msg)).await;
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(3000)).await;
+    info!("sending DM");
+
+    // test sending a message to contact
+    if let Some(contact) = foo.find_contact("PetePC") {
+        info!("found contact: {:?}", contact);
+        let msg = SendTxtMsg {
+            code: consts::CMD_SEND_TXT_MSG,
+            txt_type: 0,
+            attempt: 0,
+            sender_timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as u32,
+            pubkey_prefix: <[u8; 6]>::try_from(contact.public_key.prefix()).unwrap(),
+            text: "Hello World!".to_string(),
+        };
+        let _ = foo.command(Commands::CmdSendTxtMsg(msg)).await;
+    }
 
 
     loop {
