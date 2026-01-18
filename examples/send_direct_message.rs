@@ -76,7 +76,7 @@ async fn main() {
                 .unwrap_or_default()
                 .as_secs() as u32,
             pubkey_prefix,
-            text: "Hello World!".to_string(),
+            text: "Private Message!".to_string(),
             timeout: None
         };
         let _ = companion.command(Commands::CmdSendTxtMsg(msg)).await;

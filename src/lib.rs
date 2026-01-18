@@ -329,6 +329,7 @@ async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result<(), AppErr
                 state.write().await.device_info = Some(device_info);
             }
             consts::PUSH_CODE_SEND_CONFIRMED => {
+                info!("Received send confirmed, ack received.");
                 let confirmation = Confirmation::from_frame(&frame);
                 {
                     let mut state = state.write().await;
