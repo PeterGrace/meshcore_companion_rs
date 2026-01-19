@@ -3,6 +3,7 @@
 A Rust library for communicating with MeshCore companion devices over serial (bluetooth coming eventually)
 
 ## Current Features
+Curious about the current state of feature-completeness?  Check out the [Project Board](https://github.com/users/PeterGrace/projects/1/views/1)
 
 - Serial communication with mesh radio devices
 - Contact management and synchronization
