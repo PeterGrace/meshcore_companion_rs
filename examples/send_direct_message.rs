@@ -64,7 +64,7 @@ async fn main() {
     // RoomSrv = 2c4bd0601028f9876be8795d94a5ca1f9f798d3eb59d124985d90928ffc6e155
     // pete    = 4d10b03a615e15f703f85d471251c61625745a051fd49ecfe3efce7e2a86d50b
     // test sending a message to contact
-    if let Some(contact) = companion.find_contact("Pete").await {
+    if let Some(contact) = companion.find_contact_by_name("Pete").await {
         info!("found contact: {:?}", contact);
         let pubkey_prefix: [u8; 6] = <[u8; 6]>::try_from(contact.public_key.prefix()).unwrap();
         let msg = SendTxtMsg {

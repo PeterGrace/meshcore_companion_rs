@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use crate::contact_mgmt::PublicKey;
 
 pub enum Commands {
     CmdDeviceQuery(DeviceQuery),
@@ -6,7 +7,7 @@ pub enum Commands {
     CmdGetContacts(GetContacts),
     CmdGetDeviceTime,
     CmdSetDeviceTime,
-    CmdSendSelfAdvert,
+    CmdSendSelfAdvert(AdvertisementMode),
     CmdSetAdvertName,
     CmdSetAdvertLatLon,
     CmdSyncNextMessage,
@@ -25,7 +26,7 @@ pub enum Commands {
     CmdSetRadioTxPower,
     CmdResetPath,
     CmdSendRawData,
-    CmdSendLogin,
+    CmdSendLogin(LoginData),
     CmdSendStatusReq,
     CmdSendTracePath,
     CmdSendTelemetryReq,
@@ -37,6 +38,22 @@ pub enum Commands {
     CmdFactoryReset,
     CmdSendControlData,
     CmdGetStats,
+}
+
+#[derive(Debug, Clone)]
+pub struct LoginData {
+    pub code: u8,
+    pub public_key: PublicKey,
+    pub password: String
+}
+impl LoginData {
+    pub fn to_frame(&self) -> Vec<u8> {
+        let mut data = Vec::new();
+        data.push(self.code);
+        data.extend_from_slice(&self.public_key.bytes);
+        data.extend_from_slice(self.password.as_bytes());
+        data
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -109,4 +126,8 @@ impl SendChannelTxtMsg {
         frame.extend_from_slice(&self.text.as_bytes());
         frame   
     }
+}
+pub enum AdvertisementMode {
+    ZeroHop = 0,
+    Flood = 1
 }

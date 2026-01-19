@@ -12,12 +12,9 @@ mod tests;
 use crate::commands::SendingMessageTypes::TxtMsg;
 pub use crate::commands::{AppStart, Commands};
 use crate::commands::{GetContacts, MessageEnvelope, Reboot, SendTxtMsg, SendingMessageTypes};
-use crate::consts::CMD_GET_CONTACTS;
+use crate::consts::{CMD_GET_CONTACTS, CMD_SEND_SELF_ADVERT};
 use crate::contact_mgmt::Contact;
-use crate::responses::{
-    AckCode, ChannelMsg, ChannelMsgV3, Confirmation, ContactMsg, ContactMsgV3, DeviceInfo,
-    Responses, SelfInfo,
-};
+use crate::responses::{AckCode, ChannelMsg, ChannelMsgV3, Confirmation, ContactMsg, ContactMsgV3, DeviceInfo, LoginSuccess, Responses, SelfInfo};
 use crate::serial_actor::{serial_loop, SerialFrame};
 use crate::Commands::CmdSyncNextMessage;
 use lazy_static::lazy_static;
@@ -61,11 +58,22 @@ pub struct CompanionState {
 }
 
 impl Companion {
-    pub async fn find_contact(&self, name: &str) -> Option<Contact> {
+    pub async fn find_contact_by_name(&self, name: &str) -> Option<Contact> {
         let state = self.state.read().await;
         let contacts = state.contacts.clone();
         contacts.iter().find(|c| c.adv_name == name).cloned()
     }
+    pub async fn find_contact_by_key_prefix(&self, key: Vec<u8>) -> Option<Contact> {
+        let state = self.state.read().await;
+        let contacts = state.contacts.clone();
+        contacts.iter().find(|c| c.public_key.bytes[0..6] == key).cloned()
+    }
+    pub async fn find_contact_by_full_key(&self, key: Vec<u8>) -> Option<Contact> {
+        let state = self.state.read().await;
+        let contacts = state.contacts.clone();
+        contacts.iter().find(|c| c.public_key.bytes[0..32] == key).cloned()
+    }
+
 
     pub async fn pop_message(&self) -> Option<MessageTypes> {
         let mut state = self.state.write().await;
@@ -147,6 +155,19 @@ pub async fn send_command(
 ) -> Result<(), AppError> {
     let tx = state.write().await.to_radio_tx.clone();
     match cmd {
+        Commands::CmdSendSelfAdvert(advert_mode) => {
+            let data: Vec<u8> = vec![CMD_SEND_SELF_ADVERT, advert_mode as u8];
+            let frame: SerialFrame = SerialFrame {
+                delimiter: consts::SERIAL_OUTBOUND,
+                frame_length: data.len() as u16,
+                frame: data,
+            };
+            tx.send(frame)
+                .await
+                .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
+            Ok(())
+
+        }
         Commands::CmdReboot => {
             let data: Vec<u8> = vec![0x13, 0x72, 0x65, 0x62, 0x6f, 0x6f, 0x74];
             let frame: SerialFrame = SerialFrame {
@@ -253,6 +274,18 @@ pub async fn send_command(
                 .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
             Ok(())
         }
+        Commands::CmdSendLogin(login) => {
+            let data = login.to_frame();
+            let frame: SerialFrame = SerialFrame {
+                delimiter: consts::SERIAL_OUTBOUND,
+                frame_length: data.len() as u16,
+                frame: data,
+            };
+            tx.send(frame)
+                .await
+                .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
+            Ok(())
+        }
         _ => todo!(),
     }
 }
@@ -271,6 +304,54 @@ async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result<(), AppErr
     for msg in messages {
         let frame = msg.frame;
         match frame[0] {
+            consts::PUSH_CODE_LOGIN_FAIL => {
+                error!("Login failed.");
+            }
+            consts::PUSH_CODE_LOGIN_SUCCESS => {
+                let lock = state.read().await;
+                let login_success = LoginSuccess::from_frame(&frame);
+                let pubkey = login_success.pub_key_prefix.to_vec();
+                info!("Login successful to {:?}",pubkey);
+            }
+            consts::PUSH_CODE_SEND_CONFIRMED => {
+                info!("Received send confirmed, ack received.");
+                let confirmation = Confirmation::from_frame(&frame);
+                {
+                    let mut state = state.write().await;
+                    if state.pending_acks.contains_key(&confirmation.ack_code) {
+                        info!("Received send confirmation: {confirmation:?}");
+                        state.pending_acks.remove(&confirmation.ack_code);
+                    } else {
+                        warn!("Received send confirmation for unknown ack code: {confirmation:?}");
+                    }
+                }
+            }
+            consts::PUSH_CODE_ADVERT => {
+                info!("Received new advert, requesting contact sync.");
+                let get_contacts = GetContacts {
+                    code: CMD_GET_CONTACTS,
+                    since: Some(state.read().await.newest_advert_time),
+                };
+                let _ = send_command(&state, Commands::CmdGetContacts(get_contacts)).await;
+            }
+            consts::PUSH_CODE_MSG_WAITING => {
+                debug!("Received Message Waiting Indicator");
+                let _ = send_command(&state, Commands::CmdSyncNextMessage).await;
+            }
+            consts::PUSH_CODE_PATH_UPDATED => {
+                info!("Received updated path for a contact, requesting full contact sync.");
+                let get_contacts = GetContacts {
+                    code: CMD_GET_CONTACTS,
+                    since: Some(state.read().await.newest_advert_time),
+                };
+                let _ = send_command(&state, Commands::CmdGetContacts(get_contacts)).await;
+            }
+            consts::PUSH_CODE_LOG_RX_DATA => {
+                let snr = i32::from_le_bytes([frame[1], frame[2], frame[3], frame[4]]);
+                let rssi = frame[5];
+                let data = frame[6..].to_vec();
+                debug!("Received log rx data: snr: {snr}, rssi: {rssi}, data: {data:?}");
+            }
             consts::RESP_CODE_OK => {
                 info!("Received OK response.");
             }
@@ -294,9 +375,7 @@ async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result<(), AppErr
                         state.pending_acks.insert(exp_ack.clone(), envelope);
                         info!("Assigning {exp_ack} ack code for msg {msg:?}");
                     } else {
-                        return Err(AppError::Misc(
-                            "Received ack for message that was not sent".to_string(),
-                        ));
+                        info!("Received ack for message we aren't tracking.  Maybe a login.");
                     }
                 }
 
@@ -328,27 +407,6 @@ async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result<(), AppErr
                 debug!("Received device info response: {device_info:#?}");
                 state.write().await.device_info = Some(device_info);
             }
-            consts::PUSH_CODE_SEND_CONFIRMED => {
-                info!("Received send confirmed, ack received.");
-                let confirmation = Confirmation::from_frame(&frame);
-                {
-                    let mut state = state.write().await;
-                    if state.pending_acks.contains_key(&confirmation.ack_code) {
-                        info!("Received send confirmation: {confirmation:?}");
-                        state.pending_acks.remove(&confirmation.ack_code);
-                    } else {
-                        warn!("Received send confirmation for unknown ack code: {confirmation:?}");
-                    }
-                }
-            }
-            consts::PUSH_CODE_ADVERT => {
-                info!("Received new advert, requesting contact sync.");
-                let get_contacts = GetContacts {
-                    code: CMD_GET_CONTACTS,
-                    since: Some(state.read().await.newest_advert_time),
-                };
-                let _ = send_command(&state, Commands::CmdGetContacts(get_contacts)).await;
-            }
             consts::RESP_CODE_CONTACTS_START => {
                 let count = frame[1];
                 debug!("Received contacts start, {count} contacts follow.");
@@ -362,10 +420,6 @@ async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result<(), AppErr
                 let last_modified = u32::from_le_bytes([frame[1], frame[2], frame[3], frame[4]]);
                 info!("Received end of contacts, newest advert time: {last_modified}");
                 state.write().await.newest_advert_time = last_modified;
-            }
-            consts::PUSH_CODE_MSG_WAITING => {
-                debug!("Received Message Waiting Indicator");
-                let _ = send_command(&state, Commands::CmdSyncNextMessage).await;
             }
             consts::RESP_CODE_CONTACT_MSG_RECV => {
                 let contact_msg = ContactMsg::from_frame(&frame);
@@ -409,20 +463,6 @@ async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result<(), AppErr
             }
             consts::RESP_CODE_NO_MORE_MESSAGES => {
                 debug!("No more messages to sync.");
-            }
-            consts::PUSH_CODE_PATH_UPDATED => {
-                info!("Received updated path for a contact, requesting full contact sync.");
-                let get_contacts = GetContacts {
-                    code: CMD_GET_CONTACTS,
-                    since: Some(state.read().await.newest_advert_time),
-                };
-                let _ = send_command(&state, Commands::CmdGetContacts(get_contacts)).await;
-            }
-            consts::PUSH_CODE_LOG_RX_DATA => {
-                let snr = i32::from_le_bytes([frame[1], frame[2], frame[3], frame[4]]);
-                let rssi = frame[5];
-                let data = frame[6..].to_vec();
-                debug!("Received log rx data: snr: {snr}, rssi: {rssi}, data: {data:?}");
             }
             _ => {
                 warn!(

@@ -4,9 +4,8 @@ use tracing_subscriber::fmt::format::FmtSpan;
 use console_subscriber as tokio_console_subscriber;
 use tracing_subscriber::layer::SubscriberExt;
 use meshcore_companion_rs::{Companion, Commands, MessageTypes, AppStart};
-use meshcore_companion_rs::commands::{DeviceQuery, GetContacts, LoginData, SendChannelTxtMsg, SendTxtMsg};
+use meshcore_companion_rs::commands::{AdvertisementMode, DeviceQuery, GetContacts, SendChannelTxtMsg};
 use meshcore_companion_rs::consts;
-use meshcore_companion_rs::consts::CMD_SEND_LOGIN;
 
 #[tokio::main]
 async fn main() {
@@ -32,7 +31,6 @@ async fn main() {
         .with(format_layer);
     tracing::subscriber::set_global_default(subscriber).expect("Failed to set tracing subscriber");
     //endregion
-
     let mut companion = Companion::new("/dev/ttyUSB0");
     companion.start().await.unwrap();
 
@@ -61,35 +59,10 @@ async fn main() {
     // Give the companion a moment to initialize and download contacts list
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
-    if let Some(contact) = companion.find_contact_by_name("GH Public RoomSrv").await {
-        let login: LoginData = LoginData {
-            code: CMD_SEND_LOGIN,
-            public_key: contact.public_key,
-            password: "hello".to_string()
-        };
-        if let Err(e) = companion.command(Commands::CmdSendLogin(login)).await {
-            warn!("Sending login command failed: {e:?}");
-        }
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        let pubkey_prefix: [u8; 6] = <[u8; 6]>::try_from(contact.public_key.prefix()).unwrap();
-        let msg = SendTxtMsg {
-            code: consts::CMD_SEND_TXT_MSG,
-            txt_type: 0,
-            attempt: 0,
-            sender_timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs() as u32,
-            pubkey_prefix,
-            text: "Test Send To Room Server!".to_string(),
-            timeout: None
-        };
-        let _ = companion.command(Commands::CmdSendTxtMsg(msg)).await;
-        info!("Message sent! Listening for incoming messages...");
 
-    } else {
-        warn!("Couldn't find contact to login.");
-    }
+    companion.command(Commands::CmdSendSelfAdvert(AdvertisementMode::Flood)).await.unwrap();
+
+    info!("Advert Sent! Listening for incoming messages...");
     info!("Press Ctrl+C to exit");
 
     // Receive messages

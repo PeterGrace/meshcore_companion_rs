@@ -368,3 +368,34 @@ impl fmt::Debug for AckCode {
         Ok(())
     }
 }
+
+#[derive(Clone, Debug)]
+pub struct LoginSuccess {
+    code: u8,
+    permissions: u8,
+    pub(crate) pub_key_prefix: [u8; 6],
+    tag: i32,
+    new_permissions: u8,
+}
+impl LoginSuccess {
+    pub fn from_frame(frame: &Vec<u8>) -> Self {
+        let mut cursor = Cursor::new(frame);
+        let mut code = [0u8; 1];
+        cursor.read_exact(&mut code).unwrap();
+        let mut permissions = [0u8; 1];
+        cursor.read_exact(&mut permissions).unwrap();
+        let mut pub_key_prefix = [0u8; 6];
+        cursor.read_exact(&mut pub_key_prefix).unwrap();
+        let mut tag = [0u8; 4];
+        cursor.read_exact(&mut tag).unwrap();
+        let mut new_permissions = [0u8; 1];
+        cursor.read_exact(&mut new_permissions).unwrap();
+        Self {
+            code: code[0],
+            permissions: permissions[0],
+            pub_key_prefix,
+            tag: i32::from_le_bytes(tag),
+            new_permissions: new_permissions[0]
+        }
+    }
+}

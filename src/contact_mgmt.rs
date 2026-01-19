@@ -3,7 +3,7 @@ use std::io::{Cursor, Read};
 
 #[derive(Clone, Copy)]
 pub struct PublicKey {
-    bytes: [u8; 32],
+    pub(crate) bytes: [u8; 32],
 }
 
 impl PublicKey {
