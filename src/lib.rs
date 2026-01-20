@@ -12,7 +12,7 @@ mod tests;
 use crate::commands::SendingMessageTypes::TxtMsg;
 pub use crate::commands::{AppStart, Commands};
 use crate::commands::{GetContacts, MessageEnvelope, Reboot, SendTxtMsg, SendingMessageTypes};
-use crate::consts::{CMD_GET_BATT_AND_STORAGE, CMD_GET_CONTACTS, CMD_SEND_SELF_ADVERT};
+use crate::consts::{CMD_GET_BATT_AND_STORAGE, CMD_GET_CONTACTS, CMD_GET_DEVICE_TIME, CMD_SEND_SELF_ADVERT, CMD_SET_DEVICE_TIME};
 use crate::contact_mgmt::Contact;
 use crate::responses::{AckCode, BattAndStorage, ChannelMsg, ChannelMsgV3, Confirmation, ContactMsg, ContactMsgV3, DeviceInfo, LoginSuccess, Responses, SelfInfo};
 use crate::serial_actor::{serial_loop, SerialFrame};
@@ -161,6 +161,34 @@ pub async fn send_command(
 ) -> Result<(), AppError> {
     let tx = state.write().await.to_radio_tx.clone();
     match cmd {
+        Commands::CmdSetDeviceTime => {
+            let mut data: Vec<u8> = vec![CMD_SET_DEVICE_TIME];
+            let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+            let timestamp_bytes = timestamp.to_le_bytes();
+            data.extend_from_slice(&timestamp_bytes);
+            let frame: SerialFrame = SerialFrame {
+                delimiter: consts::SERIAL_OUTBOUND,
+                frame_length: data.len() as u16,
+                frame: data,
+            };
+            info!("Setting device time to {}", timestamp);
+            tx.send(frame)
+                .await
+                .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
+            Ok(())
+        }
+        Commands::CmdGetDeviceTime => {
+            let data: Vec<u8> = vec![CMD_GET_DEVICE_TIME];
+            let frame: SerialFrame = SerialFrame {
+                delimiter: consts::SERIAL_OUTBOUND,
+                frame_length: data.len() as u16,
+                frame: data,
+            };
+            tx.send(frame)
+                .await
+                .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
+            Ok(())
+        }
         Commands::CmdGetBattAndStorage => {
             let data: Vec<u8> = vec![CMD_GET_BATT_AND_STORAGE];
             let frame: SerialFrame = SerialFrame {
@@ -369,6 +397,10 @@ async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result<(), AppErr
                 let rssi = frame[5];
                 let data = frame[6..].to_vec();
                 debug!("Received log rx data: snr: {snr}, rssi: {rssi}, data: {data:?}");
+            }
+            consts::RESP_CODE_CURR_TIME => {
+                let curr_time = u32::from_le_bytes([frame[1], frame[2], frame[3], frame[4]]);
+                info!("Received radio's current time: {curr_time}");
             }
             consts::RESP_CODE_OK => {
                 info!("Received OK response.");
