@@ -399,3 +399,30 @@ impl LoginSuccess {
         }
     }
 }
+
+#[derive(Debug,Clone)]
+pub struct BattAndStorage {
+    code: u8,
+    pub(crate) milli_volts: u16,
+    pub(crate) used_kb: u32,
+    pub(crate) total_kb: u32
+}
+impl BattAndStorage {
+    pub fn from_frame(frame: &Vec<u8>) -> Self {
+        let mut cursor = Cursor::new(frame);
+        let mut code = [0u8; 1];
+        cursor.read_exact(&mut code).unwrap();
+        let mut milli_volts = [0u8; 2];
+        cursor.read_exact(&mut milli_volts).unwrap();
+        let mut used_kb = [0u8; 4];
+        cursor.read_exact(&mut used_kb).unwrap();
+        let mut total_kb = [0u8; 4];
+        cursor.read_exact(&mut total_kb).unwrap();
+        Self {
+            code: code[0],
+            milli_volts: u16::from_le_bytes(milli_volts),
+            used_kb: u32::from_le_bytes(used_kb),
+            total_kb: u32::from_le_bytes(total_kb)
+        }
+    }
+}

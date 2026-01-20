@@ -12,9 +12,9 @@ mod tests;
 use crate::commands::SendingMessageTypes::TxtMsg;
 pub use crate::commands::{AppStart, Commands};
 use crate::commands::{GetContacts, MessageEnvelope, Reboot, SendTxtMsg, SendingMessageTypes};
-use crate::consts::{CMD_GET_CONTACTS, CMD_SEND_SELF_ADVERT};
+use crate::consts::{CMD_GET_BATT_AND_STORAGE, CMD_GET_CONTACTS, CMD_SEND_SELF_ADVERT};
 use crate::contact_mgmt::Contact;
-use crate::responses::{AckCode, ChannelMsg, ChannelMsgV3, Confirmation, ContactMsg, ContactMsgV3, DeviceInfo, LoginSuccess, Responses, SelfInfo};
+use crate::responses::{AckCode, BattAndStorage, ChannelMsg, ChannelMsgV3, Confirmation, ContactMsg, ContactMsgV3, DeviceInfo, LoginSuccess, Responses, SelfInfo};
 use crate::serial_actor::{serial_loop, SerialFrame};
 use crate::Commands::CmdSyncNextMessage;
 use lazy_static::lazy_static;
@@ -55,6 +55,9 @@ pub struct CompanionState {
     device_info: Option<DeviceInfo>,
     pending_acks: HashMap<AckCode, MessageEnvelope>,
     pending_msgs: Vec<SendTxtMsg>,
+    battery_millivolts: Option<u16>,
+    storage_kb: Option<u32>,
+    storage_used_kb: Option<u32>,
 }
 
 impl Companion {
@@ -104,6 +107,9 @@ impl Companion {
             device_info: None,
             pending_acks: HashMap::new(),
             pending_msgs: vec![],
+            battery_millivolts: None,
+            storage_kb: None,
+            storage_used_kb: None,
         }));
         Companion {
             port: port.to_string(),
@@ -155,6 +161,18 @@ pub async fn send_command(
 ) -> Result<(), AppError> {
     let tx = state.write().await.to_radio_tx.clone();
     match cmd {
+        Commands::CmdGetBattAndStorage => {
+            let data: Vec<u8> = vec![CMD_GET_BATT_AND_STORAGE];
+            let frame: SerialFrame = SerialFrame {
+                delimiter: consts::SERIAL_OUTBOUND,
+                frame_length: data.len() as u16,
+                frame: data,
+            };
+            tx.send(frame)
+                .await
+                .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
+            Ok(())
+        }
         Commands::CmdSendSelfAdvert(advert_mode) => {
             let data: Vec<u8> = vec![CMD_SEND_SELF_ADVERT, advert_mode as u8];
             let frame: SerialFrame = SerialFrame {
@@ -463,6 +481,16 @@ async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result<(), AppErr
             }
             consts::RESP_CODE_NO_MORE_MESSAGES => {
                 debug!("No more messages to sync.");
+            }
+            consts::RESP_CODE_BATT_AND_STORAGE => {
+                let msg = BattAndStorage::from_frame(&frame);
+                {
+                    let mut lock = state.write().await;
+                    lock.battery_millivolts = Some(msg.milli_volts.clone());
+                    lock.storage_kb = Some(msg.total_kb.clone());
+                    lock.storage_used_kb = Some(msg.used_kb.clone());
+                }
+                debug!("Received battery and storage info: {msg:#?}");
             }
             _ => {
                 warn!(

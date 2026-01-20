@@ -54,7 +54,10 @@ async fn main() {
         since: None,
     };
     let _ = companion.command(Commands::CmdGetContacts(data)).await;
+    let _ = companion.command(Commands::CmdGetBattAndStorage).await;
     //endregion
+
+
 
     // Give the companion a moment to initialize and download contacts list
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
