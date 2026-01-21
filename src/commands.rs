@@ -10,7 +10,7 @@ pub enum Commands {
     CmdSetDeviceTime,
     CmdSendSelfAdvert(AdvertisementMode),
     CmdSetAdvertName(String),
-    CmdSetAdvertLatLon,
+    CmdSetAdvertLatLon(LatLonAlt),
     CmdSyncNextMessage,
     CmdAddUpdateContact,
     CmdRemoveContact(PublicKey),
@@ -133,4 +133,33 @@ impl SendChannelTxtMsg {
 pub enum AdvertisementMode {
     ZeroHop = 0,
     Flood = 1
+}
+#[derive(Debug, Clone)]
+pub struct LatLonAlt {
+    pub latitude: i32,
+    pub longitude: i32,
+    pub altitude: i32
+}
+
+impl LatLonAlt {
+    pub(crate) fn to_frame(&self) -> Vec<u8> {
+        let mut frame = vec![];
+        frame.extend_from_slice(&self.latitude.to_le_bytes());
+        frame.extend_from_slice(&self.longitude.to_le_bytes());
+        frame.extend_from_slice(&self.altitude.to_le_bytes());
+        frame  
+    }
+}
+
+impl LatLonAlt {
+    pub fn from_decimal(lat: f64, lon: f64, alt: f64) -> Self {
+        Self {
+            latitude: (lat * 1E6) as i32,
+            longitude: (lon * 1E6) as i32,
+            altitude: (alt * 1E6) as i32
+        }
+    }
+    pub fn to_decimal(&self) -> (f64, f64, f64) {
+        (self.latitude as f64 / 1E6, self.longitude as f64 / 1E6, self.altitude as f64 / 1E6)
+    }
 }

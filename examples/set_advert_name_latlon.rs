@@ -4,7 +4,7 @@ use tracing_subscriber::fmt::format::FmtSpan;
 use console_subscriber as tokio_console_subscriber;
 use tracing_subscriber::layer::SubscriberExt;
 use meshcore_companion_rs::{Companion, Commands, MessageTypes, AppStart};
-use meshcore_companion_rs::commands::{AdvertisementMode, DeviceQuery, GetContacts, SendChannelTxtMsg};
+use meshcore_companion_rs::commands::{AdvertisementMode, DeviceQuery, GetContacts, LatLonAlt, SendChannelTxtMsg};
 use meshcore_companion_rs::consts;
 use meshcore_companion_rs::contact_mgmt::PublicKey;
 
@@ -68,6 +68,7 @@ async fn main() {
 
     let advert_name = String::from("PetePC");
     let _ = companion.command(Commands::CmdSetAdvertName(advert_name)).await;
+    let _ = companion.command(Commands::CmdSetAdvertLatLon(LatLonAlt::from_decimal(51.5074, -0.1278, 0.0))).await;
     // Give the companion a moment to process
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
     //Send app start to get updated SelfInfo

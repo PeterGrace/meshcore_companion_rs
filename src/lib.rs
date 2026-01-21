@@ -12,7 +12,7 @@ mod tests;
 use crate::commands::SendingMessageTypes::TxtMsg;
 pub use crate::commands::{AppStart, Commands};
 use crate::commands::{GetContacts, MessageEnvelope, Reboot, SendTxtMsg, SendingMessageTypes};
-use crate::consts::{CMD_EXPORT_CONTACT, CMD_GET_BATT_AND_STORAGE, CMD_GET_CONTACTS, CMD_GET_DEVICE_TIME, CMD_REMOVE_CONTACT, CMD_SEND_SELF_ADVERT, CMD_SET_ADVERT_NAME, CMD_SET_DEVICE_TIME};
+use crate::consts::{CMD_EXPORT_CONTACT, CMD_GET_BATT_AND_STORAGE, CMD_GET_CONTACTS, CMD_GET_DEVICE_TIME, CMD_REMOVE_CONTACT, CMD_SEND_SELF_ADVERT, CMD_SET_ADVERT_LATLON, CMD_SET_ADVERT_NAME, CMD_SET_DEVICE_TIME};
 use crate::contact_mgmt::{Contact, PublicKey};
 use crate::responses::{AckCode, BattAndStorage, ChannelMsg, ChannelMsgV3, Confirmation, ContactMsg, ContactMsgV3, DeviceInfo, LoginSuccess, Responses, SelfInfo};
 use crate::serial_actor::{serial_loop, SerialFrame};
@@ -192,6 +192,17 @@ pub async fn send_command(
 ) -> Result<(), AppError> {
     let tx = state.write().await.to_radio_tx.clone();
     match cmd {
+        Commands::CmdSetAdvertLatLon(ref coords) => {
+            let mut data: Vec<u8> = vec![CMD_SET_ADVERT_LATLON];
+            let coords_bytes = coords.to_frame();
+            data.extend_from_slice(&coords_bytes);
+            let frame = SerialFrame::from_data(data);
+            tx.send(frame)
+                .await
+                .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
+            state.write().await.command_queue.push_back(cmd);
+            Ok(())
+        }
         Commands::CmdSetAdvertName(ref name) => {
             let mut data: Vec<u8> = vec![CMD_SET_ADVERT_NAME];
             let name_bytes = name.as_bytes();
