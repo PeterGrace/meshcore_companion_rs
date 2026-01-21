@@ -14,7 +14,7 @@ pub enum Commands {
     CmdAddUpdateContact,
     CmdRemoveContact,
     CmdShareContact,
-    CmdExportContact,
+    CmdExportContact(Option<PublicKey>),
     CmdImportContact,
     CmdReboot,
     CmdGetBattAndStorage,

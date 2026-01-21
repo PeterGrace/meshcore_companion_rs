@@ -5,20 +5,21 @@ pub mod consts;
 pub mod push_events;
 pub mod responses;
 
-mod contact_mgmt;
+pub mod contact_mgmt;
 mod serial_actor;
 mod tests;
 
 use crate::commands::SendingMessageTypes::TxtMsg;
 pub use crate::commands::{AppStart, Commands};
 use crate::commands::{GetContacts, MessageEnvelope, Reboot, SendTxtMsg, SendingMessageTypes};
-use crate::consts::{CMD_GET_BATT_AND_STORAGE, CMD_GET_CONTACTS, CMD_GET_DEVICE_TIME, CMD_SEND_SELF_ADVERT, CMD_SET_DEVICE_TIME};
-use crate::contact_mgmt::Contact;
+use crate::consts::{CMD_EXPORT_CONTACT, CMD_GET_BATT_AND_STORAGE, CMD_GET_CONTACTS, CMD_GET_DEVICE_TIME, CMD_SEND_SELF_ADVERT, CMD_SET_DEVICE_TIME};
+use crate::contact_mgmt::{Contact, PublicKey};
 use crate::responses::{AckCode, BattAndStorage, ChannelMsg, ChannelMsgV3, Confirmation, ContactMsg, ContactMsgV3, DeviceInfo, LoginSuccess, Responses, SelfInfo};
 use crate::serial_actor::{serial_loop, SerialFrame};
 use crate::Commands::CmdSyncNextMessage;
 use lazy_static::lazy_static;
 use std::collections::HashMap;
+use std::fmt;
 use std::io::Read;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -161,6 +162,34 @@ pub async fn send_command(
 ) -> Result<(), AppError> {
     let tx = state.write().await.to_radio_tx.clone();
     match cmd {
+        Commands::CmdExportContact(None) => {
+            let data: Vec<u8> = vec![CMD_EXPORT_CONTACT];
+            let frame: SerialFrame = SerialFrame {
+                delimiter: consts::SERIAL_OUTBOUND,
+                frame_length: data.len() as u16,
+                frame: data,
+            };
+            tx.send(frame)
+                .await
+                .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
+
+            Ok(())
+        }
+        Commands::CmdExportContact(Some(contact)) => {
+            let mut data: Vec<u8> = vec![CMD_EXPORT_CONTACT];
+            let contact_bytes = contact.bytes;
+            data.extend_from_slice(&contact_bytes);
+            let frame: SerialFrame = SerialFrame {
+                delimiter: consts::SERIAL_OUTBOUND,
+                frame_length: data.len() as u16,
+                frame: data,
+            };
+            tx.send(frame)
+                .await
+                .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
+
+            Ok(())
+        }
         Commands::CmdSetDeviceTime => {
             let mut data: Vec<u8> = vec![CMD_SET_DEVICE_TIME];
             let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
@@ -408,6 +437,11 @@ async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result<(), AppErr
             consts::RESP_CODE_ERR => {
                 error!("Received error response.");
             }
+            consts::RESP_CODE_EXPORT_CONTACT => {
+                info!("Frame len is {}", frame.len());
+                let bytes: HexData = HexData{ bytes: frame[1..].to_vec() };
+                info!("Received export contact response: meshcore://{}", bytes);
+            }
             consts::RESP_CODE_SENT => {
                 let tx_type: u8 = frame[1];
                 let exp_ack: AckCode = frame[2..6].try_into().map(AckCode).unwrap();
@@ -573,4 +607,23 @@ async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result<(), AppErr
     //endregion
 
     Ok(())
+}
+#[derive(Clone)]
+pub struct HexData {
+    bytes: Vec<u8>,
+}
+impl fmt::Display for HexData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for byte in &self.bytes {
+            write!(f, "{:02x}", byte)?;
+        }
+        Ok(())
+    }
+}impl fmt::Debug for HexData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for byte in &self.bytes {
+            write!(f, "{:02x}", byte)?;
+        }
+        Ok(())
+    }
 }

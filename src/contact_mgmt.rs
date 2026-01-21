@@ -1,14 +1,28 @@
+use crate::AppError;
 use std::fmt;
 use std::io::{Cursor, Read};
 
 #[derive(Clone, Copy)]
 pub struct PublicKey {
-    pub(crate) bytes: [u8; 32],
+    pub bytes: [u8; 32],
 }
 
 impl PublicKey {
     pub fn prefix(&self) -> Vec<u8> {
         self.bytes[0..6].to_vec()
+    }
+    pub fn from_hex(hexstr: &str) -> Result<Self, AppError> {
+        if hexstr.len() % 2 != 0 {
+            return Err(AppError::Misc("String needs to be even length".to_string()))
+        };
+
+        let decoded = (0..hexstr.len())
+            .step_by(2)
+            .map(|i| {
+                u8::from_str_radix(&hexstr[i..i + 2], 16).unwrap_or_else(|_| panic!("Invalid hex char at index {}", i))
+            })
+            .collect::<Vec<u8>>();
+        Ok(Self { bytes: <[u8; 32]>::try_from(decoded).unwrap() })
     }
 }
 

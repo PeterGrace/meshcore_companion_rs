@@ -56,7 +56,7 @@ async fn main() {
     let _ = companion.command(Commands::CmdGetContacts(data)).await;
     let _ = companion.command(Commands::CmdGetBattAndStorage).await;
     let _ = companion.command(Commands::CmdSetDeviceTime).await;
-    tokio::time::sleep(tokio::time::Duration::from_secs(500)).await;
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     let _ = companion.command(Commands::CmdGetDeviceTime).await;
 
     //endregion

@@ -1,5 +1,7 @@
 use std::fmt;
 use std::io::{Cursor, Read};
+use crate::contact_mgmt::PublicKey;
+
 #[derive(Debug)]
 pub enum Responses {
     SelfInfo(SelfInfo),
@@ -26,7 +28,7 @@ pub struct SelfInfo {
     r#type: u8,
     tx_power_dbm: u8,
     max_tx_power: u8,
-    public_key: [u8; 32],
+    public_key: PublicKey,
     adv_lat: i32,
     adv_lon: i32,
     multi_acks: u8,
@@ -80,7 +82,7 @@ impl SelfInfo {
             r#type: r#type[0],
             tx_power_dbm: tx_power_dbm[0],
             max_tx_power: max_tx_power[0],
-            public_key,
+            public_key: PublicKey{ bytes: public_key },
             adv_lat: i32::from_le_bytes(adv_lat),
             adv_lon: i32::from_le_bytes(adv_lon),
             multi_acks: multi_acks[0],
