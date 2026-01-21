@@ -9,7 +9,7 @@ pub enum Commands {
     CmdGetDeviceTime,
     CmdSetDeviceTime,
     CmdSendSelfAdvert(AdvertisementMode),
-    CmdSetAdvertName,
+    CmdSetAdvertName(String),
     CmdSetAdvertLatLon,
     CmdSyncNextMessage,
     CmdAddUpdateContact,

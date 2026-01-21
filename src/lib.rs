@@ -12,7 +12,7 @@ mod tests;
 use crate::commands::SendingMessageTypes::TxtMsg;
 pub use crate::commands::{AppStart, Commands};
 use crate::commands::{GetContacts, MessageEnvelope, Reboot, SendTxtMsg, SendingMessageTypes};
-use crate::consts::{CMD_EXPORT_CONTACT, CMD_GET_BATT_AND_STORAGE, CMD_GET_CONTACTS, CMD_GET_DEVICE_TIME, CMD_REMOVE_CONTACT, CMD_SEND_SELF_ADVERT, CMD_SET_DEVICE_TIME};
+use crate::consts::{CMD_EXPORT_CONTACT, CMD_GET_BATT_AND_STORAGE, CMD_GET_CONTACTS, CMD_GET_DEVICE_TIME, CMD_REMOVE_CONTACT, CMD_SEND_SELF_ADVERT, CMD_SET_ADVERT_NAME, CMD_SET_DEVICE_TIME};
 use crate::contact_mgmt::{Contact, PublicKey};
 use crate::responses::{AckCode, BattAndStorage, ChannelMsg, ChannelMsgV3, Confirmation, ContactMsg, ContactMsgV3, DeviceInfo, LoginSuccess, Responses, SelfInfo};
 use crate::serial_actor::{serial_loop, SerialFrame};
@@ -46,6 +46,12 @@ pub struct Companion {
     from_radio_tx: mpsc::Sender<SerialFrame>,
 }
 
+impl Companion {
+    pub async fn get_self_info(&self) -> SelfInfo {
+        self.state.read().await.self_info.clone().unwrap()
+    }
+}
+
 #[derive(Debug)]
 pub struct CompanionState {
     to_radio_tx: mpsc::Sender<SerialFrame>,
@@ -54,7 +60,7 @@ pub struct CompanionState {
     pub pending_messages: Vec<MessageTypes>,
     newest_advert_time: u32,
     receive_queue: HashMap<u8, Responses>,
-    self_info: Option<SelfInfo>,
+    pub self_info: Option<SelfInfo>,
     device_info: Option<DeviceInfo>,
     pending_acks: HashMap<AckCode, MessageEnvelope>,
     pending_msgs: Vec<SendTxtMsg>,
@@ -186,15 +192,22 @@ pub async fn send_command(
 ) -> Result<(), AppError> {
     let tx = state.write().await.to_radio_tx.clone();
     match cmd {
+        Commands::CmdSetAdvertName(ref name) => {
+            let mut data: Vec<u8> = vec![CMD_SET_ADVERT_NAME];
+            let name_bytes = name.as_bytes();
+            data.extend_from_slice(&name_bytes);
+            let frame = SerialFrame::from_data(data);
+            tx.send(frame)
+                .await
+                .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
+            state.write().await.command_queue.push_back(cmd);
+            Ok(())
+        }
         Commands::CmdRemoveContact(key) => {
             let mut data: Vec<u8> = vec![CMD_REMOVE_CONTACT];
             let contact_bytes = key.bytes;
             data.extend_from_slice(&contact_bytes);
-            let frame: SerialFrame = SerialFrame {
-                delimiter: consts::SERIAL_OUTBOUND,
-                frame_length: data.len() as u16,
-                frame: data,
-            };
+            let frame: SerialFrame = SerialFrame::from_data(data);
             tx.send(frame)
                 .await
                 .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
@@ -203,11 +216,7 @@ pub async fn send_command(
         }
         Commands::CmdExportContact(None) => {
             let data: Vec<u8> = vec![CMD_EXPORT_CONTACT];
-            let frame: SerialFrame = SerialFrame {
-                delimiter: consts::SERIAL_OUTBOUND,
-                frame_length: data.len() as u16,
-                frame: data,
-            };
+            let frame: SerialFrame = SerialFrame::from_data(data);
             tx.send(frame)
                 .await
                 .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
@@ -218,11 +227,7 @@ pub async fn send_command(
             let mut data: Vec<u8> = vec![CMD_EXPORT_CONTACT];
             let contact_bytes = contact.bytes;
             data.extend_from_slice(&contact_bytes);
-            let frame: SerialFrame = SerialFrame {
-                delimiter: consts::SERIAL_OUTBOUND,
-                frame_length: data.len() as u16,
-                frame: data,
-            };
+            let frame: SerialFrame = SerialFrame::from_data(data);
             tx.send(frame)
                 .await
                 .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
@@ -234,11 +239,7 @@ pub async fn send_command(
             let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
             let timestamp_bytes = timestamp.to_le_bytes();
             data.extend_from_slice(&timestamp_bytes);
-            let frame: SerialFrame = SerialFrame {
-                delimiter: consts::SERIAL_OUTBOUND,
-                frame_length: data.len() as u16,
-                frame: data,
-            };
+            let frame: SerialFrame = SerialFrame::from_data(data);
             info!("Setting device time to {}", timestamp);
             tx.send(frame)
                 .await
@@ -248,11 +249,7 @@ pub async fn send_command(
         }
         Commands::CmdGetDeviceTime => {
             let data: Vec<u8> = vec![CMD_GET_DEVICE_TIME];
-            let frame: SerialFrame = SerialFrame {
-                delimiter: consts::SERIAL_OUTBOUND,
-                frame_length: data.len() as u16,
-                frame: data,
-            };
+            let frame: SerialFrame = SerialFrame::from_data(data);
             tx.send(frame)
                 .await
                 .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
@@ -260,11 +257,7 @@ pub async fn send_command(
         }
         Commands::CmdGetBattAndStorage => {
             let data: Vec<u8> = vec![CMD_GET_BATT_AND_STORAGE];
-            let frame: SerialFrame = SerialFrame {
-                delimiter: consts::SERIAL_OUTBOUND,
-                frame_length: data.len() as u16,
-                frame: data,
-            };
+            let frame: SerialFrame = SerialFrame::from_data(data);
             tx.send(frame)
                 .await
                 .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
@@ -272,11 +265,7 @@ pub async fn send_command(
         }
         Commands::CmdSendSelfAdvert(ref advert_mode) => {
             let data: Vec<u8> = vec![CMD_SEND_SELF_ADVERT, advert_mode.clone() as u8];
-            let frame: SerialFrame = SerialFrame {
-                delimiter: consts::SERIAL_OUTBOUND,
-                frame_length: data.len() as u16,
-                frame: data,
-            };
+            let frame: SerialFrame = SerialFrame::from_data(data);
             tx.send(frame)
                 .await
                 .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
@@ -286,11 +275,7 @@ pub async fn send_command(
         }
         Commands::CmdReboot => {
             let data: Vec<u8> = vec![0x13, 0x72, 0x65, 0x62, 0x6f, 0x6f, 0x74];
-            let frame: SerialFrame = SerialFrame {
-                delimiter: consts::SERIAL_OUTBOUND,
-                frame_length: data.len() as u16,
-                frame: data,
-            };
+            let frame: SerialFrame = SerialFrame::from_data(data);
             tx.send(frame)
                 .await
                 .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
@@ -310,11 +295,7 @@ pub async fn send_command(
                 0x01,
             ];
 
-            let frame: SerialFrame = SerialFrame {
-                delimiter: consts::SERIAL_OUTBOUND,
-                frame_length: data.len() as u16,
-                frame: data,
-            };
+            let frame: SerialFrame = SerialFrame::from_data(data);
             tx.send(frame)
                 .await
                 .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
@@ -323,11 +304,7 @@ pub async fn send_command(
         Commands::CmdDeviceQuery(app) => {
             // Send command
             let data = vec![consts::CMD_DEVICE_QEURY, app.app_target_ver];
-            let frame: SerialFrame = SerialFrame {
-                delimiter: consts::SERIAL_OUTBOUND,
-                frame_length: data.len() as u16,
-                frame: data,
-            };
+            let frame: SerialFrame = SerialFrame::from_data(data);
             tx.send(frame)
                 .await
                 .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
@@ -335,11 +312,7 @@ pub async fn send_command(
         }
         Commands::CmdSyncNextMessage => {
             let data = vec![10u8];
-            let frame: SerialFrame = SerialFrame {
-                delimiter: consts::SERIAL_OUTBOUND,
-                frame_length: data.len() as u16,
-                frame: data,
-            };
+            let frame: SerialFrame = SerialFrame::from_data(data);
             tx.send(frame)
                 .await
                 .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
@@ -349,11 +322,7 @@ pub async fn send_command(
             let mut data = vec![payload.code];
             let since = u32::to_le_bytes(payload.since.unwrap_or(0));
             data.extend_from_slice(&since);
-            let frame: SerialFrame = SerialFrame {
-                delimiter: consts::SERIAL_OUTBOUND,
-                frame_length: data.len() as u16,
-                frame: data,
-            };
+            let frame: SerialFrame = SerialFrame::from_data(data);
             tx.send(frame)
                 .await
                 .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
@@ -368,11 +337,7 @@ pub async fn send_command(
             }
             state.write().await.pending_msgs.push(msg.clone());
             let data = msg.to_frame();
-            let frame: SerialFrame = SerialFrame {
-                delimiter: consts::SERIAL_OUTBOUND,
-                frame_length: data.len() as u16,
-                frame: data,
-            };
+            let frame: SerialFrame = SerialFrame::from_data(data);
             tx.send(frame)
                 .await
                 .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
@@ -380,11 +345,7 @@ pub async fn send_command(
         }
         Commands::CmdSendChannelTxtMsg(ref msg) => {
             let data = msg.to_frame();
-            let frame: SerialFrame = SerialFrame {
-                delimiter: consts::SERIAL_OUTBOUND,
-                frame_length: data.len() as u16,
-                frame: data,
-            };
+            let frame: SerialFrame = SerialFrame::from_data(data);
             tx.send(frame)
                 .await
                 .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
@@ -393,11 +354,7 @@ pub async fn send_command(
         }
         Commands::CmdSendLogin(login) => {
             let data = login.to_frame();
-            let frame: SerialFrame = SerialFrame {
-                delimiter: consts::SERIAL_OUTBOUND,
-                frame_length: data.len() as u16,
-                frame: data,
-            };
+            let frame: SerialFrame = SerialFrame::from_data(data);
             tx.send(frame)
                 .await
                 .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));

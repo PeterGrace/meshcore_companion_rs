@@ -42,7 +42,7 @@ async fn main() {
         app_name: "test".to_string(),
         ..AppStart::default()
     };
-    let _ = companion.command(Commands::CmdAppStart(appstart)).await;
+    let _ = companion.command(Commands::CmdAppStart(appstart.clone())).await;
 
     let data: DeviceQuery = DeviceQuery {
         code: consts::CMD_DEVICE_QEURY,
@@ -66,9 +66,15 @@ async fn main() {
     // Give the companion a moment to initialize and download contacts list
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
-
-    let contact_key: PublicKey = PublicKey::from_hex("0680ae32618ef25b6a43b30c646d8458f6da82c33556a8ced1600aa111588b6f").unwrap();
-    let _ = companion.command(Commands::CmdRemoveContact(contact_key)).await;
+    let advert_name = String::from("PetePC");
+    let _ = companion.command(Commands::CmdSetAdvertName(advert_name)).await;
+    // Give the companion a moment to process
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    //Send app start to get updated SelfInfo
+    let _ = companion.command(Commands::CmdAppStart(appstart)).await;
+    // another wait
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    info!("selfinfo: {:#?}", companion.get_self_info().await);
 
     info!("Press Ctrl+C to exit");
 

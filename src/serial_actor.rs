@@ -1,4 +1,4 @@
-use crate::AppError;
+use crate::{consts, AppError};
 use crate::consts::{SERIAL_INBOUND, SERIAL_LOOP_SLEEP_MS, SERIAL_OUTBOUND, TIMEOUT_SERIAL_MS};
 use serde::{Deserialize, Serialize};
 use std::io::ErrorKind;
@@ -13,6 +13,15 @@ pub struct SerialFrame {
     pub(crate) delimiter: u8,
     pub(crate) frame_length: u16,
     pub(crate) frame: Vec<u8>,
+}
+impl SerialFrame {
+    pub fn from_data(data: Vec<u8>) -> Self {
+        SerialFrame {
+            delimiter: consts::SERIAL_OUTBOUND,
+            frame_length: data.len() as u16,
+            frame: data,
+        }
+    }
 }
 
     pub async fn serial_loop(
