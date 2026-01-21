@@ -67,17 +67,16 @@ async fn main() {
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
 
-    info!("Our public key is: {:#?}", companion.get_public_key().await);
-   let _ = companion.command(Commands::CmdExportContact(None)).await;
-    // Give the companion a moment to retrieve the contact
-    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
-    let foo = companion.retrieve_export(PublicKey::from_hex("d7daec8c18023e8792a4b85bae6749849ab07d3a3cebedf5c4dd8be24843db78").unwrap()).await;
-    info!("{:#?}", foo);
+    let contact_key: PublicKey = PublicKey::from_hex("0680ae32618ef25b6a43b30c646d8458f6da82c33556a8ced1600aa111588b6f").unwrap();
+   let _ = companion.command(Commands::CmdRemoveContact(contact_key)).await;
 
     info!("Press Ctrl+C to exit");
 
     // Receive messages
     loop {
+        while let Some(result) = companion.pop_result().await {
+            info!("Result: {:?}", result);
+        };
         while let Some(msg) = companion.pop_message().await {
             match msg {
                 MessageTypes::ContactMsg(msg) => {

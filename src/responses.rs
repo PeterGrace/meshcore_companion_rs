@@ -22,13 +22,13 @@ pub enum Responses {
     AdvertPath,
     Stats,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SelfInfo {
     code: u8,
     r#type: u8,
     tx_power_dbm: u8,
     max_tx_power: u8,
-    public_key: PublicKey,
+    pub(crate) public_key: PublicKey,
     adv_lat: i32,
     adv_lon: i32,
     multi_acks: u8,

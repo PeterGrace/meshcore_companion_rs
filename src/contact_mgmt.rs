@@ -8,6 +8,12 @@ pub struct PublicKey {
 }
 
 impl PublicKey {
+    pub(crate) fn from_bytes(p0: [u8; 32]) -> Self {
+        PublicKey { bytes: p0 }
+    }
+}
+
+impl PublicKey {
     pub fn prefix(&self) -> Vec<u8> {
         self.bytes[0..6].to_vec()
     }

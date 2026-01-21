@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use crate::contact_mgmt::PublicKey;
 
+#[derive(Debug, Clone)]
 pub enum Commands {
     CmdDeviceQuery(DeviceQuery),
     CmdAppStart(AppStart),
@@ -12,7 +13,7 @@ pub enum Commands {
     CmdSetAdvertLatLon,
     CmdSyncNextMessage,
     CmdAddUpdateContact,
-    CmdRemoveContact,
+    CmdRemoveContact(PublicKey),
     CmdShareContact,
     CmdExportContact(Option<PublicKey>),
     CmdImportContact,
@@ -56,19 +57,20 @@ impl LoginData {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct AppStart {
     pub code: u8,
     pub app_ver: u8,
     pub reserved: [u8; 6],
     pub app_name: String,
 }
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct DeviceQuery {
     pub code: u8,
     pub app_target_ver: u8,
 }
 
+#[derive(Debug, Clone)]
 pub struct GetContacts {
     pub code: u8,
     pub since: Option<u32>,
@@ -127,6 +129,7 @@ impl SendChannelTxtMsg {
         frame   
     }
 }
+#[derive(Debug, Clone)]
 pub enum AdvertisementMode {
     ZeroHop = 0,
     Flood = 1

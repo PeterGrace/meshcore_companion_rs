@@ -12,15 +12,15 @@ mod tests;
 use crate::commands::SendingMessageTypes::TxtMsg;
 pub use crate::commands::{AppStart, Commands};
 use crate::commands::{GetContacts, MessageEnvelope, Reboot, SendTxtMsg, SendingMessageTypes};
-use crate::consts::{CMD_EXPORT_CONTACT, CMD_GET_BATT_AND_STORAGE, CMD_GET_CONTACTS, CMD_GET_DEVICE_TIME, CMD_SEND_SELF_ADVERT, CMD_SET_DEVICE_TIME};
+use crate::consts::{CMD_EXPORT_CONTACT, CMD_GET_BATT_AND_STORAGE, CMD_GET_CONTACTS, CMD_GET_DEVICE_TIME, CMD_REMOVE_CONTACT, CMD_SEND_SELF_ADVERT, CMD_SET_DEVICE_TIME};
 use crate::contact_mgmt::{Contact, PublicKey};
 use crate::responses::{AckCode, BattAndStorage, ChannelMsg, ChannelMsgV3, Confirmation, ContactMsg, ContactMsgV3, DeviceInfo, LoginSuccess, Responses, SelfInfo};
 use crate::serial_actor::{serial_loop, SerialFrame};
 use crate::Commands::CmdSyncNextMessage;
 use lazy_static::lazy_static;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fmt;
-use std::io::Read;
+use std::io::{Cursor, Read};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
@@ -34,6 +34,8 @@ pub enum AppError {
     Misc(String),
     #[error("Message Congestion: {0}")]
     Congestion(String),
+    #[error("Failed command: {0:#?}")]
+    FailedCommand(Commands)
 }
 
 #[derive(Debug)]
@@ -59,6 +61,9 @@ pub struct CompanionState {
     battery_millivolts: Option<u16>,
     storage_kb: Option<u32>,
     storage_used_kb: Option<u32>,
+    command_queue: VecDeque<Commands>,
+    result_queue: VecDeque<Result<Commands, AppError>>,
+    exports: HashMap<String, String>
 }
 
 impl Companion {
@@ -82,6 +87,22 @@ impl Companion {
     pub async fn pop_message(&self) -> Option<MessageTypes> {
         let mut state = self.state.write().await;
         state.pending_messages.pop()
+    }
+    pub async fn pop_result(&self) -> Option<Result<Commands, AppError>> {
+        let mut state = self.state.write().await;
+        state.result_queue.pop_front()
+    }
+    pub async fn retrieve_export(&self, public_key: PublicKey) -> Option<String> {
+        let mut state = self.state.write().await;
+        state.exports.remove(&public_key.to_string())
+    }
+    pub async fn get_public_key(&self) -> Option<PublicKey> {
+        let state = self.state.read().await;
+        if let Some(self_info) = &state.self_info {
+            Some(self_info.clone().public_key)
+        } else {
+            None
+        }
     }
 }
 
@@ -111,6 +132,9 @@ impl Companion {
             battery_millivolts: None,
             storage_kb: None,
             storage_used_kb: None,
+            command_queue: VecDeque::new(),
+            result_queue: VecDeque::new(),
+            exports: HashMap::new()
         }));
         Companion {
             port: port.to_string(),
@@ -162,6 +186,21 @@ pub async fn send_command(
 ) -> Result<(), AppError> {
     let tx = state.write().await.to_radio_tx.clone();
     match cmd {
+        Commands::CmdRemoveContact(key) => {
+            let mut data: Vec<u8> = vec![CMD_REMOVE_CONTACT];
+            let contact_bytes = key.bytes;
+            data.extend_from_slice(&contact_bytes);
+            let frame: SerialFrame = SerialFrame {
+                delimiter: consts::SERIAL_OUTBOUND,
+                frame_length: data.len() as u16,
+                frame: data,
+            };
+            tx.send(frame)
+                .await
+                .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
+            state.write().await.command_queue.push_back(cmd);
+            Ok(())
+        }
         Commands::CmdExportContact(None) => {
             let data: Vec<u8> = vec![CMD_EXPORT_CONTACT];
             let frame: SerialFrame = SerialFrame {
@@ -204,6 +243,7 @@ pub async fn send_command(
             tx.send(frame)
                 .await
                 .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
+            state.write().await.command_queue.push_back(cmd);
             Ok(())
         }
         Commands::CmdGetDeviceTime => {
@@ -230,8 +270,8 @@ pub async fn send_command(
                 .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
             Ok(())
         }
-        Commands::CmdSendSelfAdvert(advert_mode) => {
-            let data: Vec<u8> = vec![CMD_SEND_SELF_ADVERT, advert_mode as u8];
+        Commands::CmdSendSelfAdvert(ref advert_mode) => {
+            let data: Vec<u8> = vec![CMD_SEND_SELF_ADVERT, advert_mode.clone() as u8];
             let frame: SerialFrame = SerialFrame {
                 delimiter: consts::SERIAL_OUTBOUND,
                 frame_length: data.len() as u16,
@@ -240,6 +280,7 @@ pub async fn send_command(
             tx.send(frame)
                 .await
                 .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
+            state.write().await.command_queue.push_back(cmd);
             Ok(())
 
         }
@@ -337,7 +378,7 @@ pub async fn send_command(
                 .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
             Ok(())
         }
-        Commands::CmdSendChannelTxtMsg(msg) => {
+        Commands::CmdSendChannelTxtMsg(ref msg) => {
             let data = msg.to_frame();
             let frame: SerialFrame = SerialFrame {
                 delimiter: consts::SERIAL_OUTBOUND,
@@ -347,6 +388,7 @@ pub async fn send_command(
             tx.send(frame)
                 .await
                 .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
+            state.write().await.command_queue.push_back(cmd);
             Ok(())
         }
         Commands::CmdSendLogin(login) => {
@@ -432,15 +474,33 @@ async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result<(), AppErr
                 info!("Received radio's current time: {curr_time}");
             }
             consts::RESP_CODE_OK => {
-                info!("Received OK response.");
+                {
+                    let mut lock = state.write().await;
+                    if let Some(cmd) = lock.command_queue.pop_front() {
+                        lock.result_queue.push_back(Ok(cmd));
+                    } else {
+                        error!("Received OK response, but no commands to associate it with.");
+                    }
+                }
             }
             consts::RESP_CODE_ERR => {
-                error!("Received error response.");
+                {
+                    let mut lock = state.write().await;
+                    if let Some(cmd) = lock.command_queue.pop_front() {
+                        lock.result_queue.push_back(Err(AppError::FailedCommand(cmd)));
+                    } else {
+                        error!("Received Err response, but no commands to associate it with.");
+                    }
+                }
             }
             consts::RESP_CODE_EXPORT_CONTACT => {
                 info!("Frame len is {}", frame.len());
-                let bytes: HexData = HexData{ bytes: frame[1..].to_vec() };
-                info!("Received export contact response: meshcore://{}", bytes);
+                let hexdata: HexData =  HexData { bytes: frame[1..].to_vec()};
+                let inferred: InferredAdvert = InferredAdvert::from_frame(&hexdata.bytes);
+
+                let url = format!("meshcore://{}", hexdata);
+                info!("Received export contact response: {url}");
+                state.write().await.exports.insert(inferred.public_key.to_string(), url);
             }
             consts::RESP_CODE_SENT => {
                 let tx_type: u8 = frame[1];
@@ -625,5 +685,31 @@ impl fmt::Display for HexData {
             write!(f, "{:02x}", byte)?;
         }
         Ok(())
+    }
+}
+
+pub struct InferredAdvert {
+    code: u8,
+    something: u8,
+    public_key: PublicKey,
+    other_stuff: Vec<u8>
+}
+impl InferredAdvert {
+    pub fn from_frame(frame: &Vec<u8>) -> Self {
+        let mut cursor = Cursor::new(frame);
+        let mut code = [0u8; 1];
+        cursor.read_exact(&mut code).unwrap();
+        let mut something = [0u8; 1];
+        cursor.read_exact(&mut something).unwrap();
+        let mut public_key = [0u8; 32];
+        cursor.read_exact(&mut public_key).unwrap();
+        let mut other_stuff = vec![];
+        cursor.read_to_end(&mut other_stuff).unwrap();
+        Self {
+            code: code[0],
+            something: something[0],
+            public_key: PublicKey::from_bytes(public_key),
+            other_stuff
+        }
     }
 }
