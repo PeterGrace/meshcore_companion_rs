@@ -1,6 +1,13 @@
 use std::fmt;
 use std::io::{Cursor, Read};
-use crate::contact_mgmt::PublicKey;
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::RwLock;
+use crate::{consts, AppError, Commands, CompanionState, HexData, InferredAdvert, MessageTypes};
+use crate::commands::{send_command, GetContacts, MessageEnvelope, SendingMessageTypes};
+use crate::commands::SendingMessageTypes::TxtMsg;
+use crate::consts::CMD_GET_CONTACTS;
+use crate::contact_mgmt::{Contact, PublicKey};
 
 #[derive(Debug)]
 pub enum Responses {
@@ -427,4 +434,277 @@ impl BattAndStorage {
             total_kb: u32::from_le_bytes(total_kb)
         }
     }
+}
+
+#[instrument(skip(state))]
+pub(crate) async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result<(), AppError> {
+
+
+    //region check for inbound radio messages
+    let mut messages = vec![];
+    {
+        let mut lock = state.write().await;
+        while let Ok(msg) = lock.from_radio_rx.try_recv() {
+            messages.push(msg);
+        }
+    }
+    for msg in messages {
+        let frame = msg.frame;
+        match frame[0] {
+            consts::PUSH_CODE_LOGIN_FAIL => {
+                error!("Login failed.");
+            }
+            consts::PUSH_CODE_LOGIN_SUCCESS => {
+                let lock = state.read().await;
+                let login_success = LoginSuccess::from_frame(&frame);
+                let pubkey = login_success.pub_key_prefix.to_vec();
+                info!("Login successful to {:?}",pubkey);
+            }
+            consts::PUSH_CODE_SEND_CONFIRMED => {
+                info!("Received send confirmed, ack received.");
+                let confirmation = Confirmation::from_frame(&frame);
+                {
+                    let mut state = state.write().await;
+                    if state.pending_acks.contains_key(&confirmation.ack_code) {
+                        info!("Received send confirmation: {confirmation:?}");
+                        state.pending_acks.remove(&confirmation.ack_code);
+                    } else {
+                        warn!("Received send confirmation for unknown ack code: {confirmation:?}");
+                    }
+                }
+            }
+            consts::PUSH_CODE_ADVERT => {
+                info!("Received new advert, requesting contact sync.");
+                let get_contacts = GetContacts {
+                    code: CMD_GET_CONTACTS,
+                    since: Some(state.read().await.newest_advert_time),
+                };
+                let _ = send_command(&state, Commands::CmdGetContacts(get_contacts)).await;
+            }
+            consts::PUSH_CODE_MSG_WAITING => {
+                debug!("Received Message Waiting Indicator");
+                let _ = send_command(&state, Commands::CmdSyncNextMessage).await;
+            }
+            consts::PUSH_CODE_PATH_UPDATED => {
+                info!("Received updated path for a contact, requesting full contact sync.");
+                let get_contacts = GetContacts {
+                    code: CMD_GET_CONTACTS,
+                    since: Some(state.read().await.newest_advert_time),
+                };
+                let _ = send_command(&state, Commands::CmdGetContacts(get_contacts)).await;
+            }
+            consts::PUSH_CODE_LOG_RX_DATA => {
+                let snr = i32::from_le_bytes([frame[1], frame[2], frame[3], frame[4]]);
+                let rssi = frame[5];
+                let data = frame[6..].to_vec();
+                debug!("Received log rx data: snr: {snr}, rssi: {rssi}, data: {data:?}");
+            }
+            consts::RESP_CODE_CURR_TIME => {
+                let curr_time = u32::from_le_bytes([frame[1], frame[2], frame[3], frame[4]]);
+                info!("Received radio's current time: {curr_time}");
+            }
+            consts::RESP_CODE_OK => {
+                {
+                    let mut lock = state.write().await;
+                    if let Some(cmd) = lock.command_queue.pop_front() {
+                        lock.result_queue.push_back(Ok(cmd));
+                    } else {
+                        error!("Received OK response, but no commands to associate it with.");
+                    }
+                }
+            }
+            consts::RESP_CODE_ERR => {
+                {
+                    let err_code = frame[1];
+                    let mut lock = state.write().await;
+                    if let Some(cmd) = lock.command_queue.pop_front() {
+                        let err = match err_code {
+                            consts::ERR_CODE_UNSUPPORTED_CMD => AppError::UnsupportedCommand(cmd),
+                            consts::ERR_CODE_NOT_FOUND => AppError::NotFound(cmd),
+                            consts::ERR_CODE_TABLE_FULL => AppError::TableFull(cmd),
+                            consts::ERR_CODE_BAD_STATE => AppError::BadState(cmd),
+                            consts::ERR_CODE_FILE_IO_ERROR => AppError::FileIoError(cmd),
+                            consts::ERR_CODE_ILLEGAL_ARG => AppError::IllegalArgument(cmd),
+                            _ => AppError::FailedCommand(cmd)
+                        };
+                        lock.result_queue.push_back(Err(err));
+                    } else {
+                        error!("Received Err response, but no commands to associate it with.");
+                    }
+                }
+            }
+            consts::RESP_CODE_EXPORT_CONTACT => {
+                info!("Frame len is {}", frame.len());
+                let hexdata: HexData =  HexData { bytes: frame[1..].to_vec()};
+                let inferred: InferredAdvert = InferredAdvert::from_frame(&hexdata.bytes);
+
+                let url = format!("meshcore://{}", hexdata);
+                info!("Received export contact response: {url}");
+                state.write().await.exports.insert(inferred.public_key.to_string(), url);
+            }
+            consts::RESP_CODE_SENT => {
+                let tx_type: u8 = frame[1];
+                let exp_ack: AckCode = frame[2..6].try_into().map(AckCode).unwrap();
+                let suggested_timeout = frame[6..10].try_into().map(u32::from_le_bytes).unwrap();
+
+                {
+                    let mut state = state.write().await;
+                    if let Some(msg) = state.pending_msgs.pop() {
+                        let mut msg_timeout = msg.clone();
+                        msg_timeout.timeout = Some(suggested_timeout);
+                        let envelope = MessageEnvelope {
+                            msg: TxtMsg(msg_timeout),
+                            last_attempt_timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis(),
+                        };
+                        state.pending_acks.insert(exp_ack.clone(), envelope);
+                        info!("Assigning {exp_ack} ack code for msg {msg:?}");
+                    } else {
+                        info!("Received ack for message we aren't tracking.  Maybe a login.");
+                    }
+                }
+
+                match tx_type {
+                    0 => {
+                        info!(
+                            "Message sent via Flood Routing.  Ack expected: {exp_ack:?}, suggested timeout is {suggested_timeout}ms"
+                        );
+                    }
+                    1 => {
+                        info!(
+                            "Message sent via Direct Routing.  Ack expected: {exp_ack:?}, suggested timeout is {suggested_timeout}ms"
+                        );
+                    }
+                    _ => {
+                        info!(
+                            "Message sent via unknown type {tx_type}  Ack expected: {exp_ack:?}, suggested timeout is {suggested_timeout}ms"
+                        );
+                    }
+                }
+            }
+            consts::RESP_CODE_SELF_INFO => {
+                let self_info = SelfInfo::from_frame(&frame);
+                debug!("Received self info response: {self_info:#?}");
+                state.write().await.self_info = Some(self_info);
+            }
+            consts::RESP_CODE_DEVICE_INFO => {
+                let device_info = DeviceInfo::from_frame(&frame);
+                debug!("Received device info response: {device_info:#?}");
+                state.write().await.device_info = Some(device_info);
+            }
+            consts::RESP_CODE_CONTACTS_START => {
+                let count = frame[1];
+                debug!("Received contacts start, {count} contacts follow.");
+            }
+            consts::RESP_CODE_CONTACT => {
+                let contact = Contact::from_frame(&frame);
+                debug!("Received contact: {contact:?}");
+                state.write().await.contacts.push(contact);
+            }
+            consts::RESP_CODE_END_OF_CONTACTS => {
+                let last_modified = u32::from_le_bytes([frame[1], frame[2], frame[3], frame[4]]);
+                info!("Received end of contacts, newest advert time: {last_modified}");
+                state.write().await.newest_advert_time = last_modified;
+            }
+            consts::RESP_CODE_CONTACT_MSG_RECV => {
+                let contact_msg = ContactMsg::from_frame(&frame);
+                debug!("Received contact message: {contact_msg:?}");
+                state
+                    .write()
+                    .await
+                    .pending_messages
+                    .push(MessageTypes::ContactMsg(contact_msg));
+                let _ = send_command(&state, Commands::CmdSyncNextMessage).await;
+            }
+            consts::RESP_CODE_CONTACT_MSG_RECV_V3 => {
+                let contact_msg = ContactMsgV3::from_frame(&frame);
+                debug!("Received channel message: {contact_msg:?}");
+                state
+                    .write()
+                    .await
+                    .pending_messages
+                    .push(MessageTypes::ContactMsgV3(contact_msg));
+                let _ = send_command(&state, Commands::CmdSyncNextMessage).await;
+            }
+            consts::RESP_CODE_CHANNEL_MSG_RECV => {
+                let msg = ChannelMsg::from_frame(&frame);
+                debug!("Received channel message: {msg:?}");
+                state
+                    .write()
+                    .await
+                    .pending_messages
+                    .push(MessageTypes::ChannelMsg(msg));
+                let _ = send_command(&state, Commands::CmdSyncNextMessage).await;
+            }
+            consts::RESP_CODE_CHANNEL_MSG_RECV_V3 => {
+                let msg = ChannelMsgV3::from_frame(&frame);
+                debug!("Received channel message: {msg:?}");
+                state
+                    .write()
+                    .await
+                    .pending_messages
+                    .push(MessageTypes::ChannelMsgV3(msg));
+                let _ = send_command(&state, Commands::CmdSyncNextMessage).await;
+            }
+            consts::RESP_CODE_NO_MORE_MESSAGES => {
+                debug!("No more messages to sync.");
+            }
+            consts::RESP_CODE_BATT_AND_STORAGE => {
+                let msg = BattAndStorage::from_frame(&frame);
+                {
+                    let mut lock = state.write().await;
+                    lock.battery_millivolts = Some(msg.milli_volts.clone());
+                    lock.storage_kb = Some(msg.total_kb.clone());
+                    lock.storage_used_kb = Some(msg.used_kb.clone());
+                }
+                debug!("Received battery and storage info: {msg:#?}");
+            }
+            _ => {
+                warn!(
+                    "unimplemented response code: {:02x} {:02x?}",
+                    frame[0], frame
+                );
+            }
+        }
+    }
+    //endregion
+
+    //region check for messages that require re-delivery attempts
+    let mut pending_sends = vec![];
+    {
+        let mut lock = state.read().await;
+        for (k, v) in lock.pending_acks.iter() {
+            pending_sends.push((k.clone(), v.clone()));
+        }
+    }
+    for (ack_code, _) in pending_sends {
+        let mut lock = state.write().await;
+        if let Some(mut envelope) = lock.pending_acks.remove(&ack_code) {
+            match envelope.clone().msg {
+                SendingMessageTypes::TxtMsg(prev_msg) => {
+                    let mut msg = prev_msg;
+                    if msg.attempt > 2 {
+                        warn!("Message {msg:?}, failed to receive ack after 3 attempts.");
+                    } else {
+                        let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
+                        if current_time - envelope.last_attempt_timestamp > msg.timeout.unwrap() as u128 {
+                            msg.attempt += 1;
+                            info!("Resending message {msg:?}");
+                            drop(lock);
+                            let _ = send_command(&state, Commands::CmdSendTxtMsg(msg.clone())).await;
+                        } else {
+                            lock.pending_acks.insert(ack_code, envelope);
+                        }
+                    }
+                }
+                SendingMessageTypes::ChannelMsg(msg) => {
+                    todo!()
+                }
+            }
+        } else {
+            warn!("msg existed in first sweep but not second, this should not happen.")
+        }
+    }
+    //endregion
+
+    Ok(())
 }
