@@ -204,6 +204,15 @@ pub async fn send_command(
 ) -> Result<(), AppError> {
     let tx = state.write().await.to_radio_tx.clone();
     match cmd {
+        Commands::CmdSetRadioTxPower(power) => {
+            let data = vec![CMD_SET_RADIO_PARAMS, power];
+            let frame: SerialFrame = SerialFrame::from_data(data);
+            tx.send(frame)
+                .await
+                .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
+            state.write().await.command_queue.push_back(cmd);
+            Ok(())
+        }
         Commands::CmdResetPath(ref pubkey) => {
             let mut data: Vec<u8> = vec![CMD_RESET_PATH];
             let pubkey_bytes = pubkey.bytes;

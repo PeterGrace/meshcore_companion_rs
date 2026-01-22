@@ -70,6 +70,8 @@ async fn main() {
 
     let rp = USA_RADIO_PRESET;
     let _ = companion.command(Commands::CmdSetRadioParams(rp)).await;
+    let power = 20;
+    let _ = companion.command(Commands::CmdSetRadioTxPower(power)).await;
 
     info!("Press Ctrl+C to exit");
 
