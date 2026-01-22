@@ -86,6 +86,9 @@ pub struct CompanionState {
 }
 
 impl Companion {
+    pub async fn get_contacts(&self) -> Vec<Contact> {
+        self.state.read().await.contacts.clone()
+    }
     pub async fn find_contact_by_name(&self, name: &str) -> Option<Contact> {
         let state = self.state.read().await;
         let contacts = state.contacts.clone();
@@ -205,6 +208,17 @@ pub async fn send_command(
 ) -> Result<(), AppError> {
     let tx = state.write().await.to_radio_tx.clone();
     match cmd {
+        Commands::CmdResetPath(ref pubkey) => {
+            let mut data: Vec<u8> = vec![CMD_RESET_PATH];
+            let pubkey_bytes = pubkey.bytes;
+            data.extend_from_slice(&pubkey_bytes);
+            let frame = SerialFrame::from_data(data);
+            tx.send(frame)
+                .await
+                .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
+            state.write().await.command_queue.push_back(cmd);
+            Ok(())
+        }
         Commands::CmdSetRadioParams(ref radioparams) => {
             //    if (freq >= 300000 && freq <= 2500000 && sf >= 5 && sf <= 12 && cr >= 5 && cr <= 8 && bw >= 7000 &&
             //         bw <= 500000) {

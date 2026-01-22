@@ -1,0 +1,99 @@
+#[macro_use] extern crate tracing;
+use tracing_subscriber::{EnvFilter, Registry};
+use tracing_subscriber::fmt::format::FmtSpan;
+use console_subscriber as tokio_console_subscriber;
+use tracing_subscriber::layer::SubscriberExt;
+use meshcore_companion_rs::{Companion, Commands, MessageTypes, AppStart};
+use meshcore_companion_rs::commands::{AdvertisementMode, DeviceQuery, GetContacts, SendChannelTxtMsg};
+use meshcore_companion_rs::consts;
+use meshcore_companion_rs::contact_mgmt::PublicKey;
+
+#[tokio::main]
+async fn main() {
+    //region console logging
+    let default_log_level = "info".to_string(); 
+    let console_layer = tokio_console_subscriber::spawn();
+    let filter_layer = EnvFilter::try_from_default_env()
+        .or_else(|_| EnvFilter::try_new(&default_log_level))
+        .unwrap();
+    let format_layer = tracing_subscriber::fmt::layer()
+        .event_format(
+            tracing_subscriber::fmt::format()
+                .with_file(true)
+                .with_thread_ids(true)
+                .with_thread_names(true)
+                .with_line_number(true),
+        )
+        .with_span_events(FmtSpan::NONE);
+
+    let subscriber = Registry::default()
+        .with(console_layer)
+        .with(filter_layer)
+        .with(format_layer);
+    tracing::subscriber::set_global_default(subscriber).expect("Failed to set tracing subscriber");
+    //endregion
+    let mut companion = Companion::new("/dev/ttyUSB0");
+    companion.start().await.unwrap();
+
+    //region companion data sync (contacts, app info)
+    let appstart: AppStart = AppStart {
+        code: consts::CMD_APP_START,
+        app_ver: 1,
+        app_name: "test".to_string(),
+        ..AppStart::default()
+    };
+    let _ = companion.command(Commands::CmdAppStart(appstart)).await;
+
+    let data: DeviceQuery = DeviceQuery {
+        code: consts::CMD_DEVICE_QEURY,
+        app_target_ver: 3,
+    };
+    let _ = companion.command(Commands::CmdDeviceQuery(data)).await;
+
+    let data: GetContacts = GetContacts {
+        code: consts::CMD_GET_CONTACTS,
+        since: None,
+    };
+    let _ = companion.command(Commands::CmdGetContacts(data)).await;
+    let _ = companion.command(Commands::CmdGetBattAndStorage).await;
+    let _ = companion.command(Commands::CmdSetDeviceTime).await;
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    let _ = companion.command(Commands::CmdGetDeviceTime).await;
+    //endregion
+
+
+
+    // Give the companion a moment to initialize and download contacts list
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
+    info!("{:#?}",companion.get_contacts().await);
+    let contact_key: PublicKey = PublicKey::from_hex("4d10b03a615e15f703f85d471251c61625745a051fd49ecfe3efce7e2a86d50b").unwrap();
+    let _ = companion.command(Commands::CmdResetPath(contact_key)).await;
+
+    info!("Press Ctrl+C to exit");
+
+    // Receive messages
+    loop {
+        while let Some(result) = companion.pop_result().await {
+            info!("Result: {:?}", result);
+        };
+        while let Some(msg) = companion.pop_message().await {
+            match msg {
+                MessageTypes::ContactMsg(msg) => {
+                    info!("[{}] {}", msg.pubkey_prefix.iter().map(|b| format!("{:02x}", b)).collect::<String>(), msg.text);
+                },
+                MessageTypes::ContactMsgV3(msg) => {
+                    info!("[{}] {}", msg.pubkey_prefix.iter().map(|b| format!("{:02x}", b)).collect::<String>(), msg.text);
+                },
+                MessageTypes::ChannelMsg(msg) => {
+                    info!("[{}] {}", msg.channel_id, msg.text);
+                }
+                MessageTypes::ChannelMsgV3(msg) => {
+                    info!("[{}] {}", msg.channel_id, msg.text);
+                }
+
+            }
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
+    }
+}

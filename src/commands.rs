@@ -26,7 +26,7 @@ pub enum Commands {
     CmdSendChannelTxtMsg(SendChannelTxtMsg),
     CmdSetRadioParams(RadioParameters),
     CmdSetRadioTxPower,
-    CmdResetPath,
+    CmdResetPath(PublicKey),
     CmdSendRawData,
     CmdSendLogin(LoginData),
     CmdSendStatusReq,
