@@ -58,8 +58,8 @@ pub const RESP_CODE_EXPORT_CONTACT: u8 = 11;
 pub const RESP_CODE_BATT_AND_STORAGE: u8 = 12;
 pub const RESP_CODE_SENT: u8 = 6;
 pub const RESP_CODE_ADVERT_PATH: u8 = 22;
+pub const RESP_CODE_TUNING_PARAMS: u8 = 23;
 pub const RESP_CODE_STATUS: u8 = 24;
-
 //endregion
 
 //region Push Codes (consts)

@@ -436,6 +436,50 @@ impl BattAndStorage {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct TuningParameters {
+    pub(crate) code: u8,
+    pub rxdelay_base: u32,
+    pub airtime_factor: u32,
+    pub reserved: [u8; 8]
+}
+impl TuningParameters {
+    pub fn new(rxdelay_base: u32, airtime_factor: u32) -> Self {
+    Self {
+            code: consts::CMD_SET_TUNING_PARAMS,
+            rxdelay_base,
+            airtime_factor,
+            reserved: [0u8; 8]
+        }
+    }
+    pub fn to_frame(&self) -> Vec<u8> {
+        let mut frame = vec![self.code];
+        frame.extend_from_slice(&self.rxdelay_base.to_le_bytes());
+        frame.extend_from_slice(&self.airtime_factor.to_le_bytes());
+        frame.extend_from_slice(&self.reserved);
+        frame
+    }
+    pub fn from_frame(frame: &Vec<u8>) -> Self {
+        let mut cursor = Cursor::new(frame);
+        let mut code = [0u8; 1];
+        cursor.read_exact(&mut code).unwrap();
+        let mut rxdelay_base = [0u8; 4];
+        cursor.read_exact(&mut rxdelay_base).unwrap();
+        let mut airtime_factor = [0u8; 4];
+        cursor.read_exact(&mut airtime_factor).unwrap();
+        let mut reserved = [0u8; 8];
+        cursor.read_exact(&mut reserved).unwrap();
+        Self {
+            code: code[0],
+            rxdelay_base: u32::from_le_bytes(rxdelay_base),
+            airtime_factor: u32::from_le_bytes(airtime_factor),
+            reserved
+        }
+    }
+}
+
+
+
 #[instrument(skip(state))]
 pub(crate) async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result<(), AppError> {
 
@@ -451,6 +495,11 @@ pub(crate) async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result
     for msg in messages {
         let frame = msg.frame;
         match frame[0] {
+            consts::RESP_CODE_TUNING_PARAMS => {
+                let params = TuningParameters::from_frame(&frame);
+                info!("Received new tuning parameters: {params:?}");
+                state.write().await.tuning_parameters = Some(params.clone());
+            }
             consts::PUSH_CODE_LOGIN_FAIL => {
                 error!("Login failed.");
             }

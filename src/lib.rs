@@ -14,7 +14,7 @@ pub use crate::commands::{AppStart, Commands};
 use crate::commands::{send_command, GetContacts, MessageEnvelope, Reboot, SendTxtMsg, SendingMessageTypes};
 use crate::consts::*;
 use crate::contact_mgmt::{Contact, PublicKey};
-use crate::responses::{AckCode, BattAndStorage, ChannelMsg, ChannelMsgV3, Confirmation, ContactMsg, ContactMsgV3, DeviceInfo, LoginSuccess, Responses, SelfInfo};
+use crate::responses::{AckCode, BattAndStorage, ChannelMsg, ChannelMsgV3, Confirmation, ContactMsg, ContactMsgV3, DeviceInfo, LoginSuccess, Responses, SelfInfo, TuningParameters};
 use crate::serial_actor::{serial_loop, SerialFrame};
 use crate::Commands::CmdSyncNextMessage;
 use lazy_static::lazy_static;
@@ -61,8 +61,14 @@ pub struct Companion {
 }
 
 impl Companion {
-    pub async fn get_self_info(&self) -> SelfInfo {
-        self.state.read().await.self_info.clone().unwrap()
+    pub async fn get_tuning_parameters(&self) -> Option<TuningParameters>{
+        self.state.read().await.tuning_parameters.clone()
+    }
+}
+
+impl Companion {
+    pub async fn get_self_info(&self) -> Option<SelfInfo> {
+        self.state.read().await.self_info.clone()
     }
 }
 
@@ -83,7 +89,8 @@ pub struct CompanionState {
     storage_used_kb: Option<u32>,
     command_queue: VecDeque<Commands>,
     result_queue: VecDeque<Result<Commands, AppError>>,
-    exports: HashMap<String, String>
+    exports: HashMap<String, String>,
+    tuning_parameters: Option<TuningParameters>
 }
 
 impl Companion {
@@ -157,7 +164,8 @@ impl Companion {
             storage_used_kb: None,
             command_queue: VecDeque::new(),
             result_queue: VecDeque::new(),
-            exports: HashMap::new()
+            exports: HashMap::new(),
+            tuning_parameters: None
         }));
         Companion {
             port: port.to_string(),

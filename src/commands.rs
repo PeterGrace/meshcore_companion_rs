@@ -3,8 +3,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use crate::{consts, AppError, CompanionState};
-use crate::consts::{CMD_EXPORT_CONTACT, CMD_GET_BATT_AND_STORAGE, CMD_GET_DEVICE_TIME, CMD_REMOVE_CONTACT, CMD_RESET_PATH, CMD_SEND_SELF_ADVERT, CMD_SET_ADVERT_LATLON, CMD_SET_ADVERT_NAME, CMD_SET_DEVICE_TIME, CMD_SET_RADIO_PARAMS};
+use crate::consts::*;
 use crate::contact_mgmt::PublicKey;
+use crate::responses::TuningParameters;
 use crate::serial_actor::SerialFrame;
 
 #[derive(Debug, Clone)]
@@ -25,7 +26,7 @@ pub enum Commands {
     CmdImportContact,
     CmdReboot,
     CmdGetBattAndStorage,
-    CmdSetTuningParams,
+    CmdSetTuningParams(TuningParameters),
     CmdSetOtherParams,
     CmdSendTxtMsg(SendTxtMsg),
     CmdSendChannelTxtMsg(SendChannelTxtMsg),
@@ -204,6 +205,27 @@ pub async fn send_command(
 ) -> Result<(), AppError> {
     let tx = state.write().await.to_radio_tx.clone();
     match cmd {
+        Commands::CmdGetTuningParams => {
+            let data = TuningParameters {
+                code: consts::CMD_GET_TUNING_PARAMS,
+                ..Default::default()
+            }.to_frame();
+            let frame: SerialFrame = SerialFrame::from_data(data);
+            tx.send(frame)
+                .await
+                .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
+            Ok(())
+        }
+        Commands::CmdSetTuningParams(ref params) => {
+            let data = params.to_frame();
+            let frame = SerialFrame::from_data(data);
+            tx.send(frame)
+                .await
+                .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
+            state.write().await.command_queue.push_back(cmd);
+            Ok(())
+
+        }
         Commands::CmdSetRadioTxPower(power) => {
             let data = vec![CMD_SET_RADIO_PARAMS, power];
             let frame: SerialFrame = SerialFrame::from_data(data);
