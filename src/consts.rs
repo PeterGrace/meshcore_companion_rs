@@ -1,3 +1,5 @@
+use crate::commands::RadioParameters;
+
 //region Command Codes (consts)
 pub const CMD_DEVICE_QEURY: u8 = 22;
 pub const CMD_APP_START: u8 = 1;
@@ -92,3 +94,5 @@ pub const TIMEOUT_SERIAL_MS: u64 = 100;
 
 pub const SERIAL_INBOUND: u8 = 62;
 pub const SERIAL_OUTBOUND: u8 = 60;
+
+pub const USA_RADIO_PRESET: RadioParameters = RadioParameters { code: 11, radio_freq: 910525, radio_bw: 62500, radio_sf: 7, radio_cr: 5 };

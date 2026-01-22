@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use crate::consts::CMD_SET_RADIO_PARAMS;
 use crate::contact_mgmt::PublicKey;
 
 #[derive(Debug, Clone)]
@@ -23,7 +24,7 @@ pub enum Commands {
     CmdSetOtherParams,
     CmdSendTxtMsg(SendTxtMsg),
     CmdSendChannelTxtMsg(SendChannelTxtMsg),
-    CmdSetRadioParams,
+    CmdSetRadioParams(RadioParameters),
     CmdSetRadioTxPower,
     CmdResetPath,
     CmdSendRawData,
@@ -161,5 +162,33 @@ impl LatLonAlt {
     }
     pub fn to_decimal(&self) -> (f64, f64, f64) {
         (self.latitude as f64 / 1E6, self.longitude as f64 / 1E6, self.altitude as f64 / 1E6)
+    }
+}
+#[derive(Debug, Clone)]
+pub struct RadioParameters {
+    pub code: u8,
+    pub radio_freq:u32,
+    pub radio_bw: u32,
+    pub radio_sf: u8,
+    pub radio_cr: u8
+}
+impl RadioParameters {
+    pub fn new(radio_freq: u32, radio_bw: u32, radio_sf: u8, radio_cr: u8) -> Self {
+        Self {
+            code: CMD_SET_RADIO_PARAMS,
+            radio_freq,
+            radio_bw,
+            radio_sf,
+            radio_cr
+        }
+    }
+    pub fn to_frame(&self) -> Vec<u8> {
+        let mut frame = vec![];
+        frame.extend_from_slice(&self.code.to_le_bytes());
+        frame.extend_from_slice(&self.radio_freq.to_le_bytes());
+        frame.extend_from_slice(&self.radio_bw.to_le_bytes());
+        frame.extend_from_slice(&self.radio_sf.to_le_bytes());
+        frame.extend_from_slice(&self.radio_cr.to_le_bytes());
+        frame
     }
 }

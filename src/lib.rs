@@ -12,7 +12,7 @@ mod tests;
 use crate::commands::SendingMessageTypes::TxtMsg;
 pub use crate::commands::{AppStart, Commands};
 use crate::commands::{GetContacts, MessageEnvelope, Reboot, SendTxtMsg, SendingMessageTypes};
-use crate::consts::{CMD_EXPORT_CONTACT, CMD_GET_BATT_AND_STORAGE, CMD_GET_CONTACTS, CMD_GET_DEVICE_TIME, CMD_REMOVE_CONTACT, CMD_SEND_SELF_ADVERT, CMD_SET_ADVERT_LATLON, CMD_SET_ADVERT_NAME, CMD_SET_DEVICE_TIME};
+use crate::consts::*;
 use crate::contact_mgmt::{Contact, PublicKey};
 use crate::responses::{AckCode, BattAndStorage, ChannelMsg, ChannelMsgV3, Confirmation, ContactMsg, ContactMsgV3, DeviceInfo, LoginSuccess, Responses, SelfInfo};
 use crate::serial_actor::{serial_loop, SerialFrame};
@@ -35,7 +35,20 @@ pub enum AppError {
     #[error("Message Congestion: {0}")]
     Congestion(String),
     #[error("Failed command: {0:#?}")]
-    FailedCommand(Commands)
+    FailedCommand(Commands),
+    #[error("Unsupported Command: {0:#?}")]
+    UnsupportedCommand(Commands),
+    #[error("Entry not found: {0:#?}")]
+    NotFound(Commands),
+    #[error("Table full: {0:#?}")]
+    TableFull(Commands),
+    #[error("Bad state: {0:#?}")]
+    BadState(Commands),
+    #[error("File I/O error: {0:#?}")]
+    FileIoError(Commands),
+    #[error("Invalid argument: {0:#?}")]
+    IllegalArgument(Commands),
+
 }
 
 #[derive(Debug)]
@@ -192,6 +205,17 @@ pub async fn send_command(
 ) -> Result<(), AppError> {
     let tx = state.write().await.to_radio_tx.clone();
     match cmd {
+        Commands::CmdSetRadioParams(ref radioparams) => {
+            //    if (freq >= 300000 && freq <= 2500000 && sf >= 5 && sf <= 12 && cr >= 5 && cr <= 8 && bw >= 7000 &&
+            //         bw <= 500000) {
+            let data: Vec<u8> = radioparams.to_frame();
+            let frame = SerialFrame::from_data(data);
+            tx.send(frame)
+                .await
+                .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
+            state.write().await.command_queue.push_back(cmd);
+            Ok(())
+        }
         Commands::CmdSetAdvertLatLon(ref coords) => {
             let mut data: Vec<u8> = vec![CMD_SET_ADVERT_LATLON];
             let coords_bytes = coords.to_frame();
@@ -453,9 +477,19 @@ async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result<(), AppErr
             }
             consts::RESP_CODE_ERR => {
                 {
+                    let err_code = frame[1];
                     let mut lock = state.write().await;
                     if let Some(cmd) = lock.command_queue.pop_front() {
-                        lock.result_queue.push_back(Err(AppError::FailedCommand(cmd)));
+                        let err = match err_code {
+                            consts::ERR_CODE_UNSUPPORTED_CMD => AppError::UnsupportedCommand(cmd),
+                            consts::ERR_CODE_NOT_FOUND => AppError::NotFound(cmd),
+                            consts::ERR_CODE_TABLE_FULL => AppError::TableFull(cmd),
+                            consts::ERR_CODE_BAD_STATE => AppError::BadState(cmd),
+                            consts::ERR_CODE_FILE_IO_ERROR => AppError::FileIoError(cmd),
+                            consts::ERR_CODE_ILLEGAL_ARG => AppError::IllegalArgument(cmd),
+                            _ => AppError::FailedCommand(cmd)
+                        };
+                        lock.result_queue.push_back(Err(err));
                     } else {
                         error!("Received Err response, but no commands to associate it with.");
                     }
