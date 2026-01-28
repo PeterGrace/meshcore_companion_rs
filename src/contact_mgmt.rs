@@ -1,8 +1,8 @@
-use crate::AppError;
+use crate::{string_to_bytes, AppError};
 use std::fmt;
 use std::io::{Cursor, Read};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct PublicKey {
     pub bytes: [u8; 32],
 }
@@ -16,6 +16,9 @@ impl PublicKey {
 impl PublicKey {
     pub fn prefix(&self) -> Vec<u8> {
         self.bytes[0..6].to_vec()
+    }
+    pub fn prefix_bytes(&self) -> [u8; 6] {
+        self.bytes[0..6].try_into().unwrap()
     }
     pub fn from_hex(hexstr: &str) -> Result<Self, AppError> {
         if hexstr.len() % 2 != 0 {
@@ -49,7 +52,7 @@ impl fmt::Display for PublicKey {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Contact {
     pub public_key: PublicKey,
     pub adv_type: u8,
@@ -61,8 +64,26 @@ pub struct Contact {
     pub adv_lat: i32,
     pub adv_lon: i32,
     pub lastmod: u32,
+    pub logged_in: Option<bool>
 }
+
+
 impl Contact {
+    pub(crate) fn to_frame(&self) -> Vec<u8> {
+
+        let mut data = vec![];
+        data.extend_from_slice(&self.public_key.bytes);
+        data.extend_from_slice(&[self.adv_type]);
+        data.extend_from_slice(&[self.flags]);
+        data.extend_from_slice(self.out_path_len.to_le_bytes().as_slice());
+        data.extend_from_slice(&self.out_path);
+        data.extend_from_slice(&string_to_bytes::<32>(&self.adv_name.to_string()));
+        data.extend_from_slice(&self.last_advert.to_le_bytes());
+        data.extend_from_slice(&self.adv_lat.to_le_bytes());
+        data.extend_from_slice(&self.adv_lon.to_le_bytes());
+
+        data
+    }
     pub fn from_frame(frame: &Vec<u8>) -> Self {
         let mut cursor = Cursor::new(frame);
 
@@ -98,14 +119,14 @@ impl Contact {
             flags: flags[0],
             out_path_len: out_path_len[0] as i8,
             out_path,
-            adv_name: String::from_utf8(adv_name.to_vec())
-                .unwrap()
+            adv_name: String::from_utf8_lossy(&adv_name)
                 .trim_end_matches('\0')
                 .to_string(),
             last_advert: u32::from_le_bytes(last_advert),
             adv_lat: i32::from_le_bytes(adv_lat),
             adv_lon: i32::from_le_bytes(adv_lon),
             lastmod: u32::from_le_bytes(lastmod),
+            logged_in: None
         }
     }
 }

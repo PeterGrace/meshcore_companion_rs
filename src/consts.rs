@@ -27,6 +27,7 @@ pub const CMD_RESET_PATH: u8 = 13;
 pub const CMD_SEND_RAW_DATA: u8 = 25;
 pub const CMD_SEND_LOGIN: u8 = 26;
 pub const CMD_SEND_STATUS_REQ: u8 = 27;
+pub const CMD_LOGOUT: u8 = 29;
 pub const CMD_SEND_TRACE_PATH: u8 = 36;
 pub const CMD_SEND_TELEMETRY_REQ: u8 = 39;
 pub const CMD_GET_CUSTOM_VARS: u8 = 40;
@@ -37,6 +38,7 @@ pub const CMD_SEND_BINARY_REQ: u8 = 50;
 pub const CMD_FACTORY_RESET: u8 = 51;
 pub const CMD_SEND_CONTROL_DATA: u8 = 55;
 pub const CMD_GET_STATS: u8 = 56;
+
 //endregion
 
 //region Response Codes (consts)
@@ -92,7 +94,9 @@ pub const MPSC_BUFFER_DEPTH: usize = 100;
 pub const SERIAL_LOOP_SLEEP_MS: u64 = 10;
 pub const TIMEOUT_SERIAL_MS: u64 = 100;
 
+// hex: 0x3e
 pub const SERIAL_INBOUND: u8 = 62;
+// hex: 0x3c
 pub const SERIAL_OUTBOUND: u8 = 60;
 
 pub const USA_RADIO_PRESET: RadioParameters = RadioParameters { code: 11, radio_freq: 910525, radio_bw: 62500, radio_sf: 7, radio_cr: 5 };

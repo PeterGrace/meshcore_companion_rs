@@ -6,6 +6,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use meshcore_companion_rs::{Companion, Commands, MessageTypes, AppStart};
 use meshcore_companion_rs::commands::{AdvertisementMode, DeviceQuery, GetContacts, SendChannelTxtMsg};
 use meshcore_companion_rs::consts;
+use meshcore_companion_rs::contact_mgmt::PublicKey;
 
 #[tokio::main]
 async fn main() {
@@ -65,14 +66,20 @@ async fn main() {
     // Give the companion a moment to initialize and download contacts list
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
+    let contacts = companion.get_contacts().await;
+    for contact in contacts {
+        info!("Updating {contact:?}");
+        let _ = companion.command(Commands::CmdAddUpdateContact(contact)).await;
+    }
 
-    companion.command(Commands::CmdSendSelfAdvert(AdvertisementMode::Flood)).await.unwrap();
-
-    info!("Advert Sent! Listening for incoming messages...");
     info!("Press Ctrl+C to exit");
 
     // Receive messages
     loop {
+        while let Some(result) = companion.pop_result().await {
+            info!("Result: {:?}", result);
+        };
+
         while let Some(msg) = companion.pop_message().await {
             match msg {
                 MessageTypes::ContactMsg(msg) => {

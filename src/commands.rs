@@ -2,13 +2,13 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
-use crate::{consts, AppError, CompanionState};
+use crate::{consts, string_to_bytes, AppError, CompanionState};
 use crate::consts::*;
-use crate::contact_mgmt::PublicKey;
+use crate::contact_mgmt::{Contact, PublicKey};
 use crate::responses::TuningParameters;
 use crate::serial_actor::SerialFrame;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Commands {
     CmdDeviceQuery(DeviceQuery),
     CmdAppStart(AppStart),
@@ -19,7 +19,7 @@ pub enum Commands {
     CmdSetAdvertName(String),
     CmdSetAdvertLatLon(LatLonAlt),
     CmdSyncNextMessage,
-    CmdAddUpdateContact,
+    CmdAddUpdateContact(Contact),
     CmdRemoveContact(PublicKey),
     CmdShareContact,
     CmdExportContact(Option<PublicKey>),
@@ -46,38 +46,39 @@ pub enum Commands {
     CmdFactoryReset,
     CmdSendControlData,
     CmdGetStats,
+    CmdLogout(PublicKey),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LoginData {
     pub code: u8,
     pub public_key: PublicKey,
-    pub password: String
+    pub password: [u8; 15]
 }
 impl LoginData {
     pub fn to_frame(&self) -> Vec<u8> {
         let mut data = Vec::new();
         data.push(self.code);
         data.extend_from_slice(&self.public_key.bytes);
-        data.extend_from_slice(self.password.as_bytes());
+        data.extend_from_slice(&self.password);
         data
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone, PartialEq)]
 pub struct AppStart {
     pub code: u8,
     pub app_ver: u8,
     pub reserved: [u8; 6],
     pub app_name: String,
 }
-#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone, PartialEq)]
 pub struct DeviceQuery {
     pub code: u8,
     pub app_target_ver: u8,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GetContacts {
     pub code: u8,
     pub since: Option<u32>,
@@ -100,7 +101,7 @@ pub enum SendingMessageTypes {
     ChannelMsg(SendChannelTxtMsg)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SendTxtMsg {
     pub code: u8,
     pub txt_type: u8,
@@ -119,7 +120,7 @@ impl SendTxtMsg {
         frame
     }
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SendChannelTxtMsg {
     pub code: u8,
     pub txt_type: u8,
@@ -136,12 +137,12 @@ impl SendChannelTxtMsg {
         frame   
     }
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AdvertisementMode {
     ZeroHop = 0,
     Flood = 1
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LatLonAlt {
     pub latitude: i32,
     pub longitude: i32,
@@ -170,7 +171,7 @@ impl LatLonAlt {
         (self.latitude as f64 / 1E6, self.longitude as f64 / 1E6, self.altitude as f64 / 1E6)
     }
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RadioParameters {
     pub code: u8,
     pub radio_freq:u32,
@@ -205,6 +206,27 @@ pub async fn send_command(
 ) -> Result<(), AppError> {
     let tx = state.write().await.to_radio_tx.clone();
     match cmd {
+        Commands::CmdAddUpdateContact(ref contact) => {
+            let mut data = vec![consts::CMD_ADD_UPDATE_CONTACT];
+            data.extend_from_slice(&contact.to_frame());
+            let frame: SerialFrame = SerialFrame::from_data(data);
+            tx.send(frame)
+                .await
+                .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
+            state.write().await.command_queue.push_back(cmd);
+            Ok(())
+        }
+        Commands::CmdLogout(public_key) => {
+            let mut data = vec![CMD_LOGOUT];
+            data.extend_from_slice(&public_key.bytes);
+            let frame: SerialFrame = SerialFrame::from_data(data);
+            tx.send(frame)
+                .await
+                .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
+            state.write().await.command_queue.push_back(cmd);
+            Ok(())
+
+        }
         Commands::CmdGetTuningParams => {
             let data = TuningParameters {
                 code: consts::CMD_GET_TUNING_PARAMS,
@@ -251,6 +273,7 @@ pub async fn send_command(
             //         bw <= 500000) {
             let data: Vec<u8> = radioparams.to_frame();
             let frame = SerialFrame::from_data(data);
+            info!("Setting radio params SerialFrame: {:#?}", frame);
             tx.send(frame)
                 .await
                 .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));

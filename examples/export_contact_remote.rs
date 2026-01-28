@@ -80,20 +80,14 @@ async fn main() {
                 MessageTypes::ContactMsg(msg) => {
                     info!(
                         "[{}] {}",
-                        msg.pubkey_prefix
-                            .iter()
-                            .map(|b| format!("{:02x}", b))
-                            .collect::<String>(),
+                        msg.pubkey_prefix,
                         msg.text
                     );
                 }
                 MessageTypes::ContactMsgV3(msg) => {
                     info!(
                         "[{}] {}",
-                        msg.pubkey_prefix
-                            .iter()
-                            .map(|b| format!("{:02x}", b))
-                            .collect::<String>(),
+                        msg.pubkey_prefix,
                         msg.text
                     );
                 }

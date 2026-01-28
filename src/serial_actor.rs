@@ -8,11 +8,22 @@ use tokio::sync::mpsc;
 use tokio::time::Duration;
 use tracing::{debug, error, info, trace};
 
-#[derive(Debug, PartialEq, Clone, Default)]
+#[derive(PartialEq, Clone, Default)]
 pub struct SerialFrame {
     pub(crate) delimiter: u8,
     pub(crate) frame_length: u16,
     pub(crate) frame: Vec<u8>,
+}
+
+impl std::fmt::Debug for SerialFrame {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let frame_hex = self.frame.iter().map(|b| format!("0x{:02x}", b)).collect::<Vec<_>>().join(",");
+        f.debug_struct("SerialFrame")
+            .field("delimiter", &self.delimiter)
+            .field("frame_length", &self.frame_length)
+            .field("frame", &format!("[{frame_hex}]"))
+            .finish()
+    }
 }
 impl SerialFrame {
     pub fn from_data(data: Vec<u8>) -> Self {
@@ -57,7 +68,7 @@ impl SerialFrame {
                     data.extend_from_slice(&msg.frame_length.to_le_bytes());
                     data.extend_from_slice(&msg.frame);
 
-                    debug!("Sending serial frame: {:02x?}", data);
+                    info!("Sending serial frame: {:02x?}", data);
                     if let Err(e) = fd.write_all(&data) {
                         error!("Failed to write to serial port: {}. Restarting connection...", e);
                         break; // Break inner loop to trigger reconnect

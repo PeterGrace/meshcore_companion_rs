@@ -10,14 +10,21 @@ mod serial_actor;
 mod tests;
 
 use crate::commands::SendingMessageTypes::TxtMsg;
+use crate::commands::{
+    send_command, GetContacts, MessageEnvelope, Reboot, SendTxtMsg, SendingMessageTypes,
+};
 pub use crate::commands::{AppStart, Commands};
-use crate::commands::{send_command, GetContacts, MessageEnvelope, Reboot, SendTxtMsg, SendingMessageTypes};
 use crate::consts::*;
 use crate::contact_mgmt::{Contact, PublicKey};
-use crate::responses::{AckCode, BattAndStorage, ChannelMsg, ChannelMsgV3, Confirmation, ContactMsg, ContactMsgV3, DeviceInfo, LoginSuccess, Responses, SelfInfo, TuningParameters};
+use crate::responses::check_internal;
+use crate::responses::{
+    AckCode, BattAndStorage, ChannelMsg, ChannelMsgV3, Confirmation, ContactMsg, ContactMsgV3,
+    DeviceInfo, LoginSuccess, Responses, SelfInfo, TuningParameters,
+};
 use crate::serial_actor::{serial_loop, SerialFrame};
 use crate::Commands::CmdSyncNextMessage;
 use lazy_static::lazy_static;
+use std::cmp::PartialEq;
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::io::{Cursor, Read};
@@ -27,9 +34,8 @@ use thiserror::Error;
 use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
-use crate::responses::check_internal;
 
-#[derive(Debug, Error)]
+#[derive(Clone, Debug, Error, PartialEq)]
 pub enum AppError {
     #[error("Misc: {0}")]
     Misc(String),
@@ -49,7 +55,6 @@ pub enum AppError {
     FileIoError(Commands),
     #[error("Invalid argument: {0:#?}")]
     IllegalArgument(Commands),
-
 }
 
 #[derive(Debug)]
@@ -61,7 +66,7 @@ pub struct Companion {
 }
 
 impl Companion {
-    pub async fn get_tuning_parameters(&self) -> Option<TuningParameters>{
+    pub async fn get_tuning_parameters(&self) -> Option<TuningParameters> {
         self.state.read().await.tuning_parameters.clone()
     }
 }
@@ -90,8 +95,9 @@ pub struct CompanionState {
     command_queue: VecDeque<Commands>,
     result_queue: VecDeque<Result<Commands, AppError>>,
     exports: HashMap<String, String>,
-    tuning_parameters: Option<TuningParameters>
+    tuning_parameters: Option<TuningParameters>,
 }
+
 
 impl Companion {
     pub async fn get_contacts(&self) -> Vec<Contact> {
@@ -105,18 +111,38 @@ impl Companion {
     pub async fn find_contact_by_key_prefix(&self, key: Vec<u8>) -> Option<Contact> {
         let state = self.state.read().await;
         let contacts = state.contacts.clone();
-        contacts.iter().find(|c| c.public_key.bytes[0..6] == key).cloned()
+        contacts
+            .iter()
+            .find(|c| c.public_key.bytes[0..6] == key)
+            .cloned()
     }
     pub async fn find_contact_by_full_key(&self, key: Vec<u8>) -> Option<Contact> {
         let state = self.state.read().await;
         let contacts = state.contacts.clone();
-        contacts.iter().find(|c| c.public_key.bytes[0..32] == key).cloned()
+        contacts
+            .iter()
+            .find(|c| c.public_key.bytes[0..32] == key)
+            .cloned()
     }
-
 
     pub async fn pop_message(&self) -> Option<MessageTypes> {
         let mut state = self.state.write().await;
         state.pending_messages.pop()
+    }
+    pub async fn peek_result(&self, cmd: Commands) -> Option<Result<Commands, AppError>> {
+        let mut state = self.state.write().await;
+        if let Some(result) = state.result_queue.clone().iter().find(|r| {
+            if let Ok(result_cmd) = r {
+                *result_cmd == cmd
+            } else {
+                false
+            }
+        }) {
+            state.result_queue.retain(|r| r != result);
+            Some(result.clone())
+        } else {
+            None
+        }
     }
     pub async fn pop_result(&self) -> Option<Result<Commands, AppError>> {
         let mut state = self.state.write().await;
@@ -165,7 +191,7 @@ impl Companion {
             command_queue: VecDeque::new(),
             result_queue: VecDeque::new(),
             exports: HashMap::new(),
-            tuning_parameters: None
+            tuning_parameters: None,
         }));
         Companion {
             port: port.to_string(),
@@ -185,25 +211,25 @@ impl Companion {
         tokio::task::Builder::new()
             .name("serial-loop")
             .spawn(async move {
-            serial_loop(port, &mut to_radio_rx, &from_radio_tx).await;
-        });
+                serial_loop(port, &mut to_radio_rx, &from_radio_tx).await;
+            });
         let state_handle = self.state.clone();
         tokio::task::Builder::new()
             .name("background-processor")
-        .spawn(async move {
-            info!("Background processor started.");
-            loop {
-                // We pass the clone into our internal function
-                if let Err(e) = check_internal(state_handle.clone()).await {
-                    error!("Background processor encountered an error: {}", e);
-                    // Depending on the error, you might want to break or continue
-                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                    continue;
+            .spawn(async move {
+                info!("Background processor started.");
+                loop {
+                    // We pass the clone into our internal function
+                    if let Err(e) = check_internal(state_handle.clone()).await {
+                        error!("Background processor encountered an error: {}", e);
+                        // Depending on the error, you might want to break or continue
+                        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                        continue;
+                    }
+                    // Small sleep to prevent tight-looping if no messages are arriving
+                    tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
                 }
-                // Small sleep to prevent tight-looping if no messages are arriving
-                tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
-            }
-        });
+            });
 
         Ok(())
     }
@@ -222,7 +248,8 @@ impl fmt::Display for HexData {
         }
         Ok(())
     }
-}impl fmt::Debug for HexData {
+}
+impl fmt::Debug for HexData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for byte in &self.bytes {
             write!(f, "{:02x}", byte)?;
@@ -235,7 +262,7 @@ pub struct InferredAdvert {
     code: u8,
     something: u8,
     public_key: PublicKey,
-    other_stuff: Vec<u8>
+    other_stuff: Vec<u8>,
 }
 impl InferredAdvert {
     pub fn from_frame(frame: &Vec<u8>) -> Self {
@@ -252,7 +279,15 @@ impl InferredAdvert {
             code: code[0],
             something: something[0],
             public_key: PublicKey::from_bytes(public_key),
-            other_stuff
+            other_stuff,
         }
     }
+}
+
+pub fn string_to_bytes<const N: usize>(s: &str) -> [u8; N] {
+    let bytes = s.as_bytes();
+    let mut result = [0u8; N];
+    let len = bytes.len().min(N);
+    result[..len].copy_from_slice(&bytes[..len]);
+    result
 }

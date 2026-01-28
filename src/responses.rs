@@ -100,7 +100,7 @@ impl SelfInfo {
             radio_bw: u32::from_le_bytes(radio_bw),
             radio_sf: radio_sf[0],
             radio_cr: radio_cr[0],
-            name: String::from_utf8(name).unwrap(),
+            name: String::from_utf8_lossy(name.as_slice()).to_string(),
         }
     }
 }
@@ -142,25 +142,40 @@ impl DeviceInfo {
             max_contacts_div_2: max_contacts_div_2[0],
             max_channels: max_channels[0],
             ble_pin: u32::from_le_bytes(ble_pin),
-            firmware_build_date: String::from_utf8(firmware_build_date.to_vec())
-                .unwrap()
+            firmware_build_date: String::from_utf8_lossy(&firmware_build_date)
                 .trim_end_matches('\0')
                 .to_string(),
-            manufacturer_model: String::from_utf8(manufacturer_model.to_vec())
-                .unwrap()
+            manufacturer_model: String::from_utf8_lossy(&manufacturer_model)
                 .trim_end_matches('\0')
                 .to_string(),
-            semantic_version: String::from_utf8(semantic_version.to_vec())
-                .unwrap()
+            semantic_version: String::from_utf8_lossy(&semantic_version)
                 .trim_end_matches('\0')
                 .to_string(),
         }
     }
 }
+#[derive(Clone)]
+pub struct PubkeyPrefix([u8;6]);
+impl fmt::Display for PubkeyPrefix {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for byte in &self.0 {
+            write!(f, "{:02x}", byte)?;
+        }
+        Ok(())
+    }
+}
+impl fmt::Debug for PubkeyPrefix {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for byte in &self.0 {
+            write!(f, "{:02x}", byte)?;
+        }
+        Ok(())
+    }
+}
 #[derive(Debug, Clone)]
 pub struct ContactMsg {
     code: u8,
-    pub pubkey_prefix: [u8; 6],
+    pub pubkey_prefix: PubkeyPrefix,
     path_len: u8,
     txt_type: u8,
     sender_timestamp: u32,
@@ -185,12 +200,11 @@ impl ContactMsg {
 
         Self {
             code: code[0],
-            pubkey_prefix,
+            pubkey_prefix: pubkey_prefix.into(),
             path_len: path_len[0],
             txt_type: txt_type[0],
             sender_timestamp: u32::from_le_bytes(sender_timestamp),
-            text: String::from_utf8(text)
-                .unwrap()
+            text: String::from_utf8_lossy(&text)
                 .trim_end_matches('\0')
                 .to_string()
         }
@@ -202,7 +216,7 @@ pub struct ContactMsgV3 {
     code: u8,
     snr: u8,
     reserved: [u8;2],
-    pub pubkey_prefix: [u8; 6],
+    pub pubkey_prefix: PubkeyPrefix,
     path_len: u8,
     txt_type: u8,
     sender_timestamp: u32,
@@ -228,17 +242,15 @@ impl ContactMsgV3 {
         let mut text = vec![];
         cursor.read_to_end(&mut text).unwrap();
 
-
         Self {
             code: code[0],
             snr: snr[0],
             reserved,
-            pubkey_prefix,
+            pubkey_prefix: pubkey_prefix.into(),
             path_len: path_len[0],
             txt_type: txt_type[0],
             sender_timestamp: u32::from_le_bytes(sender_timestamp),
-            text: String::from_utf8(text)
-                .unwrap()
+            text: String::from_utf8_lossy(text.as_slice())
                 .trim_end_matches('\0')
                 .to_string()
         }
@@ -276,8 +288,7 @@ impl ChannelMsg {
             path_len: path_len[0],
             txt_type: txt_type[0],
             sender_timestamp: u32::from_le_bytes(sender_timestamp),
-            text: String::from_utf8(text)
-                .unwrap()
+            text: String::from_utf8_lossy(text.as_slice())
                 .trim_end_matches('\0')
                 .to_string()
         }
@@ -323,8 +334,7 @@ impl ChannelMsgV3 {
             path_len: path_len[0],
             txt_type: txt_type[0],
             sender_timestamp: u32::from_le_bytes(sender_timestamp),
-            text: String::from_utf8(text)
-                .unwrap()
+            text: String::from_utf8_lossy(text.as_slice())
                 .trim_end_matches('\0')
                 .to_string()
         }
@@ -377,6 +387,30 @@ impl fmt::Debug for AckCode {
         Ok(())
     }
 }
+#[derive(Clone, Debug)]
+pub struct LoginFailure {
+    code: u8,
+    reserved: u8,
+    pub(crate) pub_key_prefix: [u8; 6],
+}
+impl LoginFailure {
+    pub fn from_frame(frame: &Vec<u8>) -> Self {
+        let mut cursor = Cursor::new(frame);
+        let mut code = [0u8; 1];
+        cursor.read_exact(&mut code).unwrap();
+        let mut reserved = [0u8; 1];
+        cursor.read_exact(&mut reserved).unwrap();
+        let mut pub_key_prefix = [0u8; 6];
+        cursor.read_exact(&mut pub_key_prefix).unwrap();
+        Self {
+            code: code[0],
+            reserved: reserved[0],
+            pub_key_prefix
+        }
+    }
+}
+
+
 
 #[derive(Clone, Debug)]
 pub struct LoginSuccess {
@@ -436,7 +470,7 @@ impl BattAndStorage {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct TuningParameters {
     pub(crate) code: u8,
     pub rxdelay_base: u32,
@@ -501,12 +535,22 @@ pub(crate) async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result
                 state.write().await.tuning_parameters = Some(params.clone());
             }
             consts::PUSH_CODE_LOGIN_FAIL => {
-                error!("Login failed.");
+                let mut lock = state.write().await;
+                let login_failure = LoginFailure::from_frame(&frame);
+                let pubkey = login_failure.pub_key_prefix.to_vec();
+                error!("Login failed to {pubkey:?}");
+                if let Some(c) = lock.contacts.iter_mut().find(|contact| contact.public_key.prefix() == login_failure.pub_key_prefix) {
+                    c.logged_in = Some(false)
+                }
             }
             consts::PUSH_CODE_LOGIN_SUCCESS => {
-                let lock = state.read().await;
+                let mut lock = state.write().await;
                 let login_success = LoginSuccess::from_frame(&frame);
                 let pubkey = login_success.pub_key_prefix.to_vec();
+                info!("Login successful to {pubkey:?}");
+                if let Some(c) = lock.contacts.iter_mut().find(|contact| contact.public_key.prefix() == login_success.pub_key_prefix) {
+                    c.logged_in = Some(true)
+                }
                 info!("Login successful to {:?}",pubkey);
             }
             consts::PUSH_CODE_SEND_CONFIRMED => {
@@ -531,7 +575,7 @@ pub(crate) async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result
                 let _ = send_command(&state, Commands::CmdGetContacts(get_contacts)).await;
             }
             consts::PUSH_CODE_MSG_WAITING => {
-                debug!("Received Message Waiting Indicator");
+                info!("Received Message Waiting Indicator");
                 let _ = send_command(&state, Commands::CmdSyncNextMessage).await;
             }
             consts::PUSH_CODE_PATH_UPDATED => {
@@ -595,7 +639,6 @@ pub(crate) async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result
                 let tx_type: u8 = frame[1];
                 let exp_ack: AckCode = frame[2..6].try_into().map(AckCode).unwrap();
                 let suggested_timeout = frame[6..10].try_into().map(u32::from_le_bytes).unwrap();
-
                 {
                     let mut state = state.write().await;
                     if let Some(msg) = state.pending_msgs.pop() {
@@ -611,7 +654,6 @@ pub(crate) async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result
                         info!("Received ack for message we aren't tracking.  Maybe a login.");
                     }
                 }
-
                 match tx_type {
                     0 => {
                         info!(
@@ -756,4 +798,9 @@ pub(crate) async fn check_internal(state: Arc<RwLock<CompanionState>>) -> Result
     //endregion
 
     Ok(())
+}
+impl From<[u8;6]> for PubkeyPrefix {
+    fn from(bytes: [u8;6]) -> Self {
+        Self(bytes)
+    }
 }

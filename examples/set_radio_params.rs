@@ -70,14 +70,16 @@ async fn main() {
 
     let rp = USA_RADIO_PRESET;
     let _ = companion.command(Commands::CmdSetRadioParams(rp)).await;
-    let power = 20;
-    let _ = companion.command(Commands::CmdSetRadioTxPower(power)).await;
+    // let power = 255;
+    // let _ = companion.command(Commands::CmdSetRadioTxPower(power)).await;
 
-    let _ = companion.command(Commands::CmdGetTuningParams).await;
-    if let Some(tp) = companion.get_tuning_parameters().await {
-        info!("Tuning parameters: {:?}", tp);
-        let _ = companion.command(Commands::CmdSetTuningParams(tp)).await;
-    }
+    // let _ = companion.command(Commands::CmdGetTuningParams).await;
+    // if let Some(tp) = companion.get_tuning_parameters().await {
+    //     info!("Tuning parameters: {:?}", tp);
+    //     let _ = companion.command(Commands::CmdSetTuningParams(tp)).await;
+    // }
+
+    //info!("{:#?}",companion.get_self_info().await);
 
 
     info!("Press Ctrl+C to exit");
@@ -90,10 +92,10 @@ async fn main() {
         while let Some(msg) = companion.pop_message().await {
             match msg {
                 MessageTypes::ContactMsg(msg) => {
-                    info!("[{}] {}", msg.pubkey_prefix.iter().map(|b| format!("{:02x}", b)).collect::<String>(), msg.text);
+                    info!("[{}] {}", msg.pubkey_prefix, msg.text);
                 },
                 MessageTypes::ContactMsgV3(msg) => {
-                    info!("[{}] {}", msg.pubkey_prefix.iter().map(|b| format!("{:02x}", b)).collect::<String>(), msg.text);
+                    info!("[{}] {}", msg.pubkey_prefix, msg.text);
                 },
                 MessageTypes::ChannelMsg(msg) => {
                     info!("[{}] {}", msg.channel_id, msg.text);

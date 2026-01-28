@@ -82,13 +82,17 @@ async fn main() {
 
     // Receive messages
     loop {
+        while let Some(result) = companion.pop_result().await {
+            info!("Result: {:?}", result);
+        };
+
         while let Some(msg) = companion.pop_message().await {
             match msg {
                 MessageTypes::ContactMsg(msg) => {
-                    info!("[{}] {}", msg.pubkey_prefix.iter().map(|b| format!("{:02x}", b)).collect::<String>(), msg.text);
+                    info!("[{}] {}", msg.pubkey_prefix, msg.text);
                 },
                 MessageTypes::ContactMsgV3(msg) => {
-                    info!("[{}] {}", msg.pubkey_prefix.iter().map(|b| format!("{:02x}", b)).collect::<String>(), msg.text);
+                    info!("[{}] {}", msg.pubkey_prefix, msg.text);
                 },
                 MessageTypes::ChannelMsg(msg) => {
                     info!("[{}] {}", msg.channel_id, msg.text);
