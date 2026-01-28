@@ -21,7 +21,7 @@ pub enum Commands {
     CmdSyncNextMessage,
     CmdAddUpdateContact(Contact),
     CmdRemoveContact(PublicKey),
-    CmdShareContact,
+    CmdShareContact(PublicKey),
     CmdExportContact(Option<PublicKey>),
     CmdImportContact,
     CmdReboot,
@@ -206,6 +206,16 @@ pub async fn send_command(
 ) -> Result<(), AppError> {
     let tx = state.write().await.to_radio_tx.clone();
     match cmd {
+        Commands::CmdShareContact(ref contact) => {
+            let mut data = vec![consts::CMD_SHARE_CONTACT];
+            data.extend_from_slice(&contact.bytes);
+            let frame: SerialFrame = SerialFrame::from_data(data);
+            tx.send(frame)
+                .await
+                .unwrap_or_else(|e| error!("Failed to send serial frame: {}", e));
+            state.write().await.command_queue.push_back(cmd);
+            Ok(())
+        }
         Commands::CmdAddUpdateContact(ref contact) => {
             let mut data = vec![consts::CMD_ADD_UPDATE_CONTACT];
             data.extend_from_slice(&contact.to_frame());
